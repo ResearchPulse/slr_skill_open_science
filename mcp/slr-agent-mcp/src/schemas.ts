@@ -14,12 +14,11 @@ export const submitReviewResultSchema = z.object({
   decision: z.string().trim().min(1).max(100).describe('Screening decision, commonly INCLUDE, EXCLUDE, or UNCERTAIN.'),
   reasoning: z.string().trim().min(1).max(16_000).describe('Evidence-based reasoning for the decision.'),
   data: z.record(z.string(), z.unknown()).optional().describe('Optional structured review fields.'),
+  confirmation: z.object({
+    confirm: z.boolean().describe('Set true only after the user confirms the exact payload and digest.'),
+    digest: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 digest returned by the first confirmation step.'),
+  }).strict().optional().describe('Required on the second call when the host does not support MCP elicitation.'),
 }).strict();
-
-export const confirmationAcceptedSchema = z.object({
-  confirm: z.literal(true),
-  digest: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 digest shown in the confirmation prompt.'),
-});
 
 export type ListAssignedTasksInput = z.infer<typeof listAssignedTasksSchema>;
 export type TaskIdInput = z.infer<typeof taskIdSchema>;

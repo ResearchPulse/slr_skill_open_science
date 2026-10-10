@@ -1,39 +1,14 @@
-import {
-  acceptedContent,
-  inputRequired,
-  inputResponse,
-  type InputRequiredResult,
-  McpServer,
-} from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import type { McpConfig } from './config.js';
 import { AgentApiClient } from './http-client.js';
 import { AgentApiError, redactSecret, toolError, type ToolTextResult } from './errors.js';
 import { buildConfirmationPayload, confirmationDigest } from './confirmation.js';
 import {
-  confirmationAcceptedSchema,
   listAssignedTasksSchema,
   submitReviewResultSchema,
   taskIdSchema,
 } from './schemas.js';
 import type { SubmitReviewInput } from './types.js';
-
-const confirmationRequestedSchema = {
-  type: 'object' as const,
-  properties: {
-    confirm: {
-      type: 'boolean' as const,
-      title: 'Confirm writing this review result',
-    },
-    digest: {
-      type: 'string' as const,
-      title: 'Confirmation digest',
-      description: 'The SHA-256 digest shown in this confirmation request.',
-      pattern: '^[a-f0-9]{64}$',
-    },
-  },
-  required: ['confirm', 'digest'],
-  additionalProperties: false,
-};
 
 function jsonResult(value: unknown, secret: string): ToolTextResult {
   return { content: [{ type: 'text', text: redactSecret(JSON.stringify(value), secret) }] };
@@ -61,8 +36,22 @@ function confirmationMessage(taskId: string, input: SubmitReviewInput, config: M
     `Decision: ${safeSecretDisplay(input.decision, config.agentToken, 100)}`,
     `Reasoning preview (untrusted model text): ${safeSecretDisplay(reasoningPreview, config.agentToken)}`,
     `Payload digest: ${digest}`,
-    'Choose confirm only if this exact payload is ready to be recorded in the SLR project.',
+    'No backend write has happened yet.',
+    'After the user confirms this exact payload, call submit_review_result again with confirmation.confirm=true and this digest.',
   ].join('\n');
+}
+
+function confirmationRequiredResult(taskId: string, input: SubmitReviewInput, config: McpConfig, digest: string): ToolTextResult {
+  return jsonResult({
+    status: 'CONFIRMATION_REQUIRED',
+    taskId,
+    digest,
+    message: confirmationMessage(taskId, input, config, digest),
+    nextCall: {
+      confirmation: { confirm: true, digest },
+      requirement: 'Repeat the exact taskId, decision, reasoning, and data only after explicit user confirmation.',
+    },
+  }, config.agentToken);
 }
 
 export function registerAgentTools(server: McpServer, client: AgentApiClient, config: McpConfig): void {
@@ -122,28 +111,19 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     'submit_review_result',
     {
       title: 'Submit SLR Review Result',
-      description: 'Write one review result and complete the assigned task. This changes project state. The review workflow must show the final decision, reasoning, and data to the user and obtain explicit confirmation before this tool is called; this tool also requests a final confirmation from the host before the POST is sent.',
+      description: 'Write one review result and complete the assigned task. This changes project state. The first call returns a payload digest without writing; only a second call with confirmation.confirm=true and the matching digest can send the backend POST.',
       inputSchema: submitReviewResultSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ taskId, decision, reasoning, data }, context): Promise<ToolTextResult | InputRequiredResult> => {
+    async ({ taskId, decision, reasoning, data, confirmation }): Promise<ToolTextResult> => {
       const input: SubmitReviewInput = { decision, reasoning, ...(data === undefined ? {} : { data }) };
       const digest = confirmationDigest(buildConfirmationPayload(config, taskId, input));
-      const response = inputResponse(context.mcpReq.inputResponses, 'confirmation');
-      if (response.kind === 'elicit' && response.action !== 'accept') {
-        return jsonResult({ status: 'CANCELLED', message: 'Submission cancelled; no review result was written.' }, config.agentToken);
+      if (!confirmation) {
+        return confirmationRequiredResult(taskId, input, config, digest);
       }
 
-      const confirmation = acceptedContent(context.mcpReq.inputResponses, 'confirmation', confirmationAcceptedSchema);
-      if (!confirmation) {
-        return inputRequired({
-          inputRequests: {
-            confirmation: inputRequired.elicit({
-              message: confirmationMessage(taskId, input, config, digest),
-              requestedSchema: confirmationRequestedSchema,
-            }),
-          },
-        });
+      if (!confirmation.confirm) {
+        return jsonResult({ status: 'CANCELLED', message: 'Submission cancelled; no review result was written.' }, config.agentToken);
       }
 
       if (confirmation.digest !== digest) {

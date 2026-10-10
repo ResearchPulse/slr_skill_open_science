@@ -16,6 +16,7 @@
     "compile": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run compile && vitest run --config vitest.config.ts",
+    "test:harness": "npm run compile && vitest run --config vitest.config.ts tests/acceptance.test.ts",
     "start": "node out/index.js",
     "pack:check": "npm run compile && npm pack --dry-run"
   },

@@ -22,6 +22,16 @@ async function connectPair(client: Client, server: ReturnType<typeof createServe
   await client.connect(clientTransport);
 }
 
+const reviewInput = { decision: 'INCLUDE', reasoning: 'The criteria match.' };
+
+function reviewArguments(confirmation?: { confirm: boolean; digest: string }): Record<string, unknown> {
+  return {
+    taskId: 'task-1',
+    ...reviewInput,
+    ...(confirmation === undefined ? {} : { confirmation }),
+  };
+}
+
 describe('SLR MCP server', () => {
   it('exposes exactly the four contract tools', async () => {
     const server = createServer(config);
@@ -57,9 +67,8 @@ describe('SLR MCP server', () => {
     await server.close();
   });
 
-  it('does not POST a result when final confirmation is declined', async () => {
+  it('does not POST on the first call and supports an explicit cancellation', async () => {
     let submitCount = 0;
-    let confirmationRequest = '';
     const fetchFunction: typeof fetch = async (_input, init) => {
       if (init?.method === 'POST') submitCount += 1;
       return new Response(JSON.stringify({ success: true, data: { id: 'task-1', status: 'COMPLETED' } }), {
@@ -68,33 +77,26 @@ describe('SLR MCP server', () => {
       });
     };
     const server = createServer(config, new AgentApiClient(config, fetchFunction));
-    const client = new Client(
-      { name: 'test-client', version: '1.0.0' },
-      { capabilities: { elicitation: {} } },
-    );
-    client.setRequestHandler('elicitation/create', async request => {
-      confirmationRequest = JSON.stringify(request);
-      return { action: 'decline' };
-    });
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
     await connectPair(client, server);
 
-    const result = await client.callTool({
+    const pending = await client.callTool({ name: 'submit_review_result', arguments: reviewArguments() });
+
+    expect(submitCount).toBe(0);
+    expect(JSON.stringify(pending)).toContain('CONFIRMATION_REQUIRED');
+
+    const cancelled = await client.callTool({
       name: 'submit_review_result',
-      arguments: {
-        taskId: config.agentToken,
-        decision: 'INCLUDE',
-        reasoning: `The criteria match ${config.agentToken}.`,
-      },
+      arguments: reviewArguments({ confirm: false, digest: '0'.repeat(64) }),
     });
 
     expect(submitCount).toBe(0);
-    expect(confirmationRequest).not.toContain(config.agentToken);
-    expect(JSON.stringify(result)).toContain('CANCELLED');
+    expect(JSON.stringify(cancelled)).toContain('CANCELLED');
     await client.close();
     await server.close();
   });
 
-  it('posts exactly once only after confirmation is accepted', async () => {
+  it('posts exactly once only after the matching second confirmation call', async () => {
     let submitCount = 0;
     const fetchFunction: typeof fetch = async (_input, init) => {
       if (init?.method === 'POST') submitCount += 1;
@@ -104,18 +106,16 @@ describe('SLR MCP server', () => {
       });
     };
     const server = createServer(config, new AgentApiClient(config, fetchFunction));
-    const client = new Client(
-      { name: 'test-client', version: '1.0.0' },
-      { capabilities: { elicitation: {} } },
-    );
-    const input = { decision: 'INCLUDE', reasoning: 'The criteria match.' };
-    const digest = confirmationDigest(buildConfirmationPayload(config, 'task-1', input));
-    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { confirm: true, digest } }));
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    const digest = confirmationDigest(buildConfirmationPayload(config, 'task-1', reviewInput));
     await connectPair(client, server);
+
+    const pending = await client.callTool({ name: 'submit_review_result', arguments: reviewArguments() });
+    expect(JSON.stringify(pending)).toContain(digest);
 
     const result = await client.callTool({
       name: 'submit_review_result',
-      arguments: { taskId: 'task-1', decision: 'INCLUDE', reasoning: 'The criteria match.' },
+      arguments: reviewArguments({ confirm: true, digest }),
     });
 
     expect(submitCount).toBe(1);
@@ -124,9 +124,8 @@ describe('SLR MCP server', () => {
     await server.close();
   });
 
-  it('does not POST when confirmation content is invalid', async () => {
+  it('does not POST when the confirmation digest mismatches', async () => {
     let submitCount = 0;
-    let elicitationCount = 0;
     const fetchFunction: typeof fetch = async (_input, init) => {
       if (init?.method === 'POST') submitCount += 1;
       return new Response(JSON.stringify({ success: true, data: { id: 'task-1', status: 'COMPLETED' } }), {
@@ -135,46 +134,12 @@ describe('SLR MCP server', () => {
       });
     };
     const server = createServer(config, new AgentApiClient(config, fetchFunction));
-    const client = new Client(
-      { name: 'test-client', version: '1.0.0' },
-      { capabilities: { elicitation: {} } },
-    );
-    const input = { decision: 'INCLUDE', reasoning: 'The criteria match.' };
-    const digest = confirmationDigest(buildConfirmationPayload(config, 'task-1', input));
-    client.setRequestHandler('elicitation/create', async () => {
-      elicitationCount += 1;
-      return elicitationCount === 1
-        ? { action: 'accept', content: { confirm: false, digest } }
-        : { action: 'decline' };
-    });
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
     await connectPair(client, server);
 
     const result = await client.callTool({
       name: 'submit_review_result',
-      arguments: { taskId: 'task-1', decision: 'INCLUDE', reasoning: 'The criteria match.' },
-    });
-
-    expect(submitCount).toBe(0);
-    expect(elicitationCount).toBe(2);
-    expect(JSON.stringify(result)).toContain('CANCELLED');
-    await client.close();
-    await server.close();
-  });
-
-  it('does not POST when the confirmation digest is stale', async () => {
-    let submitCount = 0;
-    const fetchFunction: typeof fetch = async (_input, init) => {
-      if (init?.method === 'POST') submitCount += 1;
-      return new Response(JSON.stringify({ success: true, data: { id: 'task-1', status: 'COMPLETED' } }), { status: 200 });
-    };
-    const server = createServer(config, new AgentApiClient(config, fetchFunction));
-    const client = new Client({ name: 'test-client', version: '1.0.0' }, { capabilities: { elicitation: {} } });
-    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { confirm: true, digest: '0'.repeat(64) } }));
-    await connectPair(client, server);
-
-    const result = await client.callTool({
-      name: 'submit_review_result',
-      arguments: { taskId: 'task-1', decision: 'INCLUDE', reasoning: 'The criteria match.' },
+      arguments: reviewArguments({ confirm: true, digest: '0'.repeat(64) }),
     });
 
     expect(submitCount).toBe(0);
@@ -183,25 +148,4 @@ describe('SLR MCP server', () => {
     await server.close();
   });
 
-  it('fails closed when the host does not advertise elicitation', async () => {
-    let submitCount = 0;
-    const fetchFunction: typeof fetch = async (_input, init) => {
-      if (init?.method === 'POST') submitCount += 1;
-      return new Response(JSON.stringify({ success: true, data: { id: 'task-1', status: 'COMPLETED' } }), { status: 200 });
-    };
-    const server = createServer(config, new AgentApiClient(config, fetchFunction));
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    await connectPair(client, server);
-
-    const result = await client.callTool({
-      name: 'submit_review_result',
-      arguments: { taskId: 'task-1', decision: 'INCLUDE', reasoning: 'The criteria match.' },
-    });
-
-    expect(submitCount).toBe(0);
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toContain('elicitation/create');
-    await client.close();
-    await server.close();
-  });
 });

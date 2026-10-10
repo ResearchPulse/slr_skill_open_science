@@ -22,6 +22,7 @@
     "compile:mcp": "npm run --workspace slr-agent-mcp compile",
     "typecheck:mcp": "npm run --workspace slr-agent-mcp typecheck",
     "test:mcp": "npm run --workspace slr-agent-mcp test",
+    "test:harness": "npm run --workspace slr-agent-mcp test:harness",
     "test:cli": "node --test tests/*.test.mjs",
     "test": "npm run test:cli && npm run test:mcp",
     "pack:check": "npm run compile:mcp && node scripts/pack-smoke.mjs",
