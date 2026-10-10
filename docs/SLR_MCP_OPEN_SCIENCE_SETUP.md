@@ -17,13 +17,13 @@ Token này chỉ có scope trên agent/project đó. Không dán token vào chat
 Release root package được gọi bằng GitHub reference cố định:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup
+npx github:ResearchPulse/slr_skill_open_science
 ```
 
 `setup` có thể tạo/kiểm tra profile metadata và in connector config không có secret. Token không bao giờ được nhập qua command argument hay ghi vào profile store. Có thể dùng `--json` để lấy output máy đọc:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup --json
+npx github:ResearchPulse/slr_skill_open_science --json
 ```
 
 `setup` đồng thời copy thư mục skill được quản lý vào `~/.agents/skills/slr`. Trong Open-Science, vào **Settings → Skills → Import installed skills**, import thư mục đã cài đặt này rồi bật skill `/slr`. Có thể dùng `--skill-dir PATH` nếu muốn đặt skill ở thư mục local khác. Nếu thư mục đích đã có skill không do package quản lý, lệnh sẽ dừng để tránh ghi đè.
@@ -35,7 +35,7 @@ Không gửi `SLR_AGENT_TOKEN` vào chat. Hãy dán token một lần vào **Set
 Dùng `doctor` để kiểm tra asset đã được đóng gói và khả năng có `open-science` CLI:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 doctor
+npx github:ResearchPulse/slr_skill_open_science doctor
 ```
 
 `doctor` luôn in report dạng JSON. Lệnh trả về non-zero nếu thiếu asset của package; việc không tìm thấy `open-science` CLI chỉ được ghi nhận trong report, không tự nó làm package check thất bại. Cả `setup` và `doctor` đều không yêu cầu hoặc in project token.
@@ -43,7 +43,7 @@ npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 doctor
 Tạo profile metadata (không cần dán token vào terminal):
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 profile create `
+npx github:ResearchPulse/slr_skill_open_science profile create `
   --name afl-review `
   --api-base-url https://<backend-host>/api `
   --project-id <project-id> `
@@ -54,8 +54,8 @@ npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 profile create `
 Khởi tạo workspace và in connector config:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 workspace init --profile afl-review
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 config --profile afl-review
+npx github:ResearchPulse/slr_skill_open_science workspace init --profile afl-review
+npx github:ResearchPulse/slr_skill_open_science config --profile afl-review
 ```
 
 Output `config` không chứa project token; nó gồm command/args, `SLR_API_BASE_URL`, profile/project metadata và credential binding ID. Import JSON này vào Open-Science Connector, bind credential cho `SLR_AGENT_TOKEN`, sau đó enable `/slr` skill.
@@ -63,7 +63,7 @@ Output `config` không chứa project token; nó gồm command/args, `SLR_API_BA
 Nếu `open-science` CLI đã được cài và credential ID đã tồn tại, có thể đăng ký connector tự động:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup `
+npx github:ResearchPulse/slr_skill_open_science setup `
   --profile afl-review `
   --register
 ```
@@ -71,7 +71,7 @@ npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup `
 Nếu registration không khả dụng, dùng lệnh pinned sau để in JSON và import thủ công:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 config --profile afl-review
+npx github:ResearchPulse/slr_skill_open_science config --profile afl-review
 ```
 
 Lệnh không bao giờ nhận project token qua argument.
@@ -82,13 +82,13 @@ Khi cấu hình connector cho bản phát hành, dùng root package và flag `--
 
 ```text
 Command: npx
-Arguments: --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 --mcp
+Arguments: --yes github:ResearchPulse/slr_skill_open_science --mcp
 ```
 
 Lệnh tương đương:
 
 ```powershell
-npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 --mcp
+npx github:ResearchPulse/slr_skill_open_science --mcp
 ```
 
 Root entrypoint chuyển tiếp stdio tới MCP server đã compile mà không gọi shell. stdout dành cho JSON-RPC; log chẩn đoán đi qua stderr.
@@ -121,7 +121,7 @@ npx
 Arguments:
 
 ```text
---yes github:ResearchPulse/slr_skill_open_science#v0.1.0 --mcp
+--yes github:ResearchPulse/slr_skill_open_science --mcp
 ```
 
 Đặt hai environment variables ở phần connector configuration, không đặt trong nội dung hội thoại. MCP giao tiếp qua stdio; stdout dành cho JSON-RPC, log chẩn đoán đi qua stderr.

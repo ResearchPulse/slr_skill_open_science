@@ -11,7 +11,7 @@
 
 ## Delivered
 
-- Root `package.json` and lockfile for `npx github:<org>/slr_skill_open_science#v0.1.0`.
+- Root `package.json` and lockfile for `npx github:<org>/slr_skill_open_science`.
 - `bin/install.js` dispatcher with `setup`, `doctor`, `update`, `help`, and `--mcp`.
 - `cli/slr.js` safe preview/diagnostics without token input or output.
 - Root runtime dependencies for clean tarball execution.

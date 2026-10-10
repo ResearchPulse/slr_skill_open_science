@@ -39,7 +39,7 @@ status: in-progress
 ## User handoff
 
 1. In SLR web: connect **ChatGPT — Open-Science**, generate the project token, assign a paper.
-2. In a terminal: run `npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup`.
+2. In a terminal: run `npx github:ResearchPulse/slr_skill_open_science`.
 3. Import the copied skill from Open-Science **Settings → Skills → Import installed skills**.
 4. Create a profile/workspace, bind the Open-Science token credential to `SLR_AGENT_TOKEN`, and import/register the generated connector.
 5. In Open-Science: run `/slr status`, then `/slr list`, then `/slr review <taskId>`.

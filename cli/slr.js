@@ -14,7 +14,7 @@ import {
 import { installSkill } from './skill-store.js';
 import { initializeWorkspace, listAudit, listDrafts } from './workspace.js';
 
-const DEFAULT_COMMAND = 'help';
+const DEFAULT_COMMAND = 'setup';
 const CREDENTIAL_OPTION_PREFIXES = ['--token', '--agent-token', '--api-key', '--password', '--secret'];
 
 function hasFlag(args, flag) {
@@ -46,7 +46,7 @@ function connectorConfig(profile) {
     displayName: `SLR (${profile.projectName || profile.name})`,
     transport: 'stdio',
     command: 'npx',
-    args: ['--yes', 'github:ResearchPulse/slr_skill_open_science#v0.1.0', '--mcp'],
+    args: ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp'],
     env: {
       SLR_API_BASE_URL: profile.apiBaseUrl,
       SLR_PROFILE_ID: profile.name,
@@ -353,7 +353,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
   }
 
   if (command === 'update') {
-    console.log('Update is non-destructive. Re-run the pinned package reference, then review the generated setup preview before changing connector state.');
+    console.log('Update is non-destructive. Re-run the GitHub package reference, then review the generated setup preview before changing connector state.');
     return;
   }
 
