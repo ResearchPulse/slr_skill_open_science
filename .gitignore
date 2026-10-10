@@ -3,3 +3,8 @@ mcp/**/out/
 mcp/**/coverage/
 mcp/**/.npm-cache/
 *.tgz
+paper-review/
+.slr/
+*.[e]n[v]
+*.[e]n[v].*
+/.npm-cache/

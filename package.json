@@ -1,0 +1,36 @@
+{
+  "name": "slr-skill-open-science",
+  "version": "0.1.0",
+  "description": "Open-Science skill and local MCP connector for SLR review tasks",
+  "type": "module",
+  "bin": {
+    "slr": "./bin/install.js"
+  },
+  "files": [
+    "bin",
+    "cli",
+    "docs",
+    "skill",
+    "mcp/slr-agent-mcp/out",
+    "mcp/slr-agent-mcp/package.json",
+    "README.md"
+  ],
+  "workspaces": [
+    "mcp/slr-agent-mcp"
+  ],
+  "scripts": {
+    "compile:mcp": "npm run --workspace slr-agent-mcp compile",
+    "typecheck:mcp": "npm run --workspace slr-agent-mcp typecheck",
+    "test:mcp": "npm run --workspace slr-agent-mcp test",
+    "pack:check": "npm run compile:mcp && node scripts/pack-smoke.mjs",
+    "prepare": "npm run compile:mcp"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.1.0"
+  },
+  "license": "MIT"
+}
