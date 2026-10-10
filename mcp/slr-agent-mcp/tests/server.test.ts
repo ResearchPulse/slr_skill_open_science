@@ -2,12 +2,18 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 import { AgentApiClient } from '../src/http-client.js';
 import { createServer } from '../src/server.js';
+import { buildConfirmationPayload, confirmationDigest } from '../src/confirmation.js';
 import type { McpConfig } from '../src/config.js';
 
 const config: McpConfig = {
   apiBaseUrl: 'https://slr.example.test/api',
   agentToken: 'slrp_test_secret',
   timeoutMs: 5_000,
+  profileId: 'test-profile',
+  projectId: 'project-1',
+  projectName: 'Test project',
+  maxJsonResponseBytes: 1_024 * 1_024,
+  maxMarkdownResponseBytes: 8 * 1_024 * 1_024,
 };
 
 async function connectPair(client: Client, server: ReturnType<typeof createServer>): Promise<void> {
@@ -30,6 +36,23 @@ describe('SLR MCP server', () => {
       'submit_review_result',
     ]);
 
+    await client.close();
+    await server.close();
+  });
+
+  it('routes the read-only list tool and redacts a token echoed by backend content', async () => {
+    const fetchFunction: typeof fetch = async () => new Response(JSON.stringify({
+      success: true,
+      data: { items: [{ id: 'task-1', title: `untrusted-${config.agentToken}` }], nextCursor: null, hasMore: false },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const server = createServer(config, new AgentApiClient(config, fetchFunction));
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await connectPair(client, server);
+
+    const result = await client.callTool({ name: 'list_assigned_tasks', arguments: { limit: 1 } });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).not.toContain(config.agentToken);
+    expect(JSON.stringify(result)).toContain('[redacted]');
     await client.close();
     await server.close();
   });
@@ -85,7 +108,9 @@ describe('SLR MCP server', () => {
       { name: 'test-client', version: '1.0.0' },
       { capabilities: { elicitation: {} } },
     );
-    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { confirm: true } }));
+    const input = { decision: 'INCLUDE', reasoning: 'The criteria match.' };
+    const digest = confirmationDigest(buildConfirmationPayload(config, 'task-1', input));
+    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { confirm: true, digest } }));
     await connectPair(client, server);
 
     const result = await client.callTool({
@@ -114,10 +139,12 @@ describe('SLR MCP server', () => {
       { name: 'test-client', version: '1.0.0' },
       { capabilities: { elicitation: {} } },
     );
+    const input = { decision: 'INCLUDE', reasoning: 'The criteria match.' };
+    const digest = confirmationDigest(buildConfirmationPayload(config, 'task-1', input));
     client.setRequestHandler('elicitation/create', async () => {
       elicitationCount += 1;
       return elicitationCount === 1
-        ? { action: 'accept', content: { confirm: false } }
+        ? { action: 'accept', content: { confirm: false, digest } }
         : { action: 'decline' };
     });
     await connectPair(client, server);
@@ -130,6 +157,50 @@ describe('SLR MCP server', () => {
     expect(submitCount).toBe(0);
     expect(elicitationCount).toBe(2);
     expect(JSON.stringify(result)).toContain('CANCELLED');
+    await client.close();
+    await server.close();
+  });
+
+  it('does not POST when the confirmation digest is stale', async () => {
+    let submitCount = 0;
+    const fetchFunction: typeof fetch = async (_input, init) => {
+      if (init?.method === 'POST') submitCount += 1;
+      return new Response(JSON.stringify({ success: true, data: { id: 'task-1', status: 'COMPLETED' } }), { status: 200 });
+    };
+    const server = createServer(config, new AgentApiClient(config, fetchFunction));
+    const client = new Client({ name: 'test-client', version: '1.0.0' }, { capabilities: { elicitation: {} } });
+    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { confirm: true, digest: '0'.repeat(64) } }));
+    await connectPair(client, server);
+
+    const result = await client.callTool({
+      name: 'submit_review_result',
+      arguments: { taskId: 'task-1', decision: 'INCLUDE', reasoning: 'The criteria match.' },
+    });
+
+    expect(submitCount).toBe(0);
+    expect(JSON.stringify(result)).toContain('CONFIRMATION_MISMATCH');
+    await client.close();
+    await server.close();
+  });
+
+  it('fails closed when the host does not advertise elicitation', async () => {
+    let submitCount = 0;
+    const fetchFunction: typeof fetch = async (_input, init) => {
+      if (init?.method === 'POST') submitCount += 1;
+      return new Response(JSON.stringify({ success: true, data: { id: 'task-1', status: 'COMPLETED' } }), { status: 200 });
+    };
+    const server = createServer(config, new AgentApiClient(config, fetchFunction));
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await connectPair(client, server);
+
+    const result = await client.callTool({
+      name: 'submit_review_result',
+      arguments: { taskId: 'task-1', decision: 'INCLUDE', reasoning: 'The criteria match.' },
+    });
+
+    expect(submitCount).toBe(0);
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('elicitation/create');
     await client.close();
     await server.close();
   });

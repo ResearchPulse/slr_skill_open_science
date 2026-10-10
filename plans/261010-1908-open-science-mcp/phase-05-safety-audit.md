@@ -1,7 +1,7 @@
 ---
 phase: 5
 title: "Confirmation, audit, and security hardening"
-status: pending
+status: in-progress
 priority: P1
 effort: "1d"
 dependencies: ["phase-02-profiles-workspace", "phase-03-mcp-contract", "phase-04-skill-harness"]
@@ -55,10 +55,10 @@ Modify or create:
 
 ## Todo list
 
-- [ ] Draft state machine documented.
-- [ ] Both confirmation gates tested.
-- [ ] Audit and receipt redaction tested.
-- [ ] Duplicate submission and interrupted-flow behavior tested.
+- [x] Draft state machine documented.
+- [x] Both confirmation gates tested.
+- [x] Audit and receipt redaction tested.
+- [ ] Duplicate submission and interrupted-flow behavior tested end-to-end through a packed install.
 
 ## Success criteria
 

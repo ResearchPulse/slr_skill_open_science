@@ -7,7 +7,7 @@ Tài liệu này hướng dẫn kết nối một project SLR với Open-Science
 1. Mở project SLR và vào **Settings → AI Agents**.
 2. Chọn **ChatGPT — Open-Science**.
 3. Bấm **Connect and generate project token**.
-4. Copy token một lần vào phần cấu hình connector local của Open-Science.
+4. Tạo một Credential dạng token trong Open-Science và bind nó cho `SLR_AGENT_TOKEN` của connector; không dán token vào chat hoặc file cấu hình.
 5. Chọn paper và bấm **Assign to ChatGPT**.
 
 Token này chỉ có scope trên agent/project đó. Không dán token vào chat, skill, source code, issue, screenshot hoặc log. Nếu token đã bị lộ, dùng **Rotate** trong SLR rồi cập nhật connector local.
@@ -17,22 +17,60 @@ Token này chỉ có scope trên agent/project đó. Không dán token vào chat
 Release root package được gọi bằng GitHub reference cố định:
 
 ```powershell
-npx --yes github:<org>/slr_skill_open_science#v0.1.0 setup
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup
 ```
 
-`setup` chỉ hiển thị safe preview, không tự thay đổi connector, profile hoặc file local. Preview cho biết package root, `open-science` CLI có được phát hiện hay không và các bước tiếp theo. Có thể dùng `--json` để lấy preview dạng JSON:
+`setup` có thể tạo/kiểm tra profile metadata và in connector config không có secret. Token không bao giờ được nhập qua command argument hay ghi vào profile store. Có thể dùng `--json` để lấy output máy đọc:
 
 ```powershell
-npx --yes github:<org>/slr_skill_open_science#v0.1.0 setup --json
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup --json
 ```
+
+`setup` đồng thời copy thư mục skill được quản lý vào `~/.agents/skills/slr`. Trong Open-Science, vào **Settings → Skills → Import installed skills**, import thư mục đã cài đặt này rồi bật skill `/slr`. Có thể dùng `--skill-dir PATH` nếu muốn đặt skill ở thư mục local khác. Nếu thư mục đích đã có skill không do package quản lý, lệnh sẽ dừng để tránh ghi đè.
 
 Dùng `doctor` để kiểm tra asset đã được đóng gói và khả năng có `open-science` CLI:
 
 ```powershell
-npx --yes github:<org>/slr_skill_open_science#v0.1.0 doctor
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 doctor
 ```
 
 `doctor` luôn in report dạng JSON. Lệnh trả về non-zero nếu thiếu asset của package; việc không tìm thấy `open-science` CLI chỉ được ghi nhận trong report, không tự nó làm package check thất bại. Cả `setup` và `doctor` đều không yêu cầu hoặc in project token.
+
+Tạo profile metadata (không cần dán token vào terminal):
+
+```powershell
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 profile create `
+  --name afl-review `
+  --api-base-url https://<backend-host>/api `
+  --project-id <project-id> `
+  --project-name "AFL review" `
+  --credential-id <open-science-credential-id>
+```
+
+Khởi tạo workspace và in connector config:
+
+```powershell
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 workspace init --profile afl-review
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 config --profile afl-review
+```
+
+Output `config` không chứa project token; nó gồm command/args, `SLR_API_BASE_URL`, profile/project metadata và credential binding ID. Import JSON này vào Open-Science Connector, bind credential cho `SLR_AGENT_TOKEN`, sau đó enable `/slr` skill.
+
+Nếu `open-science` CLI đã được cài và credential ID đã tồn tại, có thể đăng ký connector tự động:
+
+```powershell
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup `
+  --profile afl-review `
+  --register
+```
+
+Nếu registration không khả dụng, dùng lệnh pinned sau để in JSON và import thủ công:
+
+```powershell
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 config --profile afl-review
+```
+
+Lệnh không bao giờ nhận project token qua argument.
 
 ## 3. Cấu hình MCP local
 
@@ -40,13 +78,13 @@ Khi cấu hình connector cho bản phát hành, dùng root package và flag `--
 
 ```text
 Command: npx
-Arguments: --yes github:<org>/slr_skill_open_science#v0.1.0 --mcp
+Arguments: --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 --mcp
 ```
 
 Lệnh tương đương:
 
 ```powershell
-npx --yes github:<org>/slr_skill_open_science#v0.1.0 --mcp
+npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 --mcp
 ```
 
 Root entrypoint chuyển tiếp stdio tới MCP server đã compile mà không gọi shell. stdout dành cho JSON-RPC; log chẩn đoán đi qua stderr.
@@ -79,7 +117,7 @@ npx
 Arguments:
 
 ```text
---yes github:<org>/slr_skill_open_science#v0.1.0 --mcp
+--yes github:ResearchPulse/slr_skill_open_science#v0.1.0 --mcp
 ```
 
 Đặt hai environment variables ở phần connector configuration, không đặt trong nội dung hội thoại. MCP giao tiếp qua stdio; stdout dành cho JSON-RPC, log chẩn đoán đi qua stderr.
@@ -88,10 +126,12 @@ Arguments:
 
 Chọn permission mode **Ask for approval** trong Open-Science.
 
-`submit_review_result` là write tool. Luồng ghi có hai lớp:
+`submit_review_result` là write tool. Luồng ghi có đúng hai bước xác nhận độc lập:
 
-1. Skill `/slr review` hiển thị decision, reasoning và data cuối cùng rồi hỏi `confirm` hoặc `cancel`.
-2. MCP server yêu cầu confirmation qua MCP elicitation trước khi gửi POST đến backend.
+1. Skill `/slr review` lưu draft, hiển thị decision, reasoning và data cuối cùng rồi hỏi `confirm` hoặc `cancel`. Chỉ câu trả lời `confirm` mới được gọi write tool.
+2. MCP server yêu cầu MCP elicitation với `confirm: true` và payload digest khớp với profile, task, decision, reasoning và data hiện tại; chỉ sau đó mới gửi đúng một POST đến backend.
+
+Permission mode của host không thay thế hai bước trên. Nếu một bước bị từ chối, digest không khớp, hoặc host không hỗ trợ elicitation/approval thì không có request ghi nào được gửi.
 
 Nếu host không hỗ trợ elicitation/approval, không được bypass. Hãy bật capability tương ứng hoặc dừng trước bước ghi.
 
@@ -101,10 +141,13 @@ Nếu host không hỗ trợ elicitation/approval, không được bypass. Hãy 
 /slr
 /slr status
 /slr tasks
+/slr list
 /slr task <taskId>
 /slr fulltext <taskId>
 /slr review next
 /slr review <taskId>
+/slr drafts
+/slr config
 ```
 
 Không có `/slr submit`; submit chỉ là bước cuối bên trong `/slr review` sau xác nhận rõ ràng.
@@ -130,7 +173,7 @@ npm run compile
 npm pack --dry-run
 ```
 
-Package hiện expose đúng bốn tool:
+Package hiện expose đúng bốn tool, không có health/config/helper tool bổ sung:
 
 - `list_assigned_tasks`
 - `get_assigned_task`

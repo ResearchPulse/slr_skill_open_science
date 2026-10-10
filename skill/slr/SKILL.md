@@ -8,7 +8,7 @@ version: 0.1.0
 
 Use this skill to operate the SLR project through the local MCP server. The skill handles task discovery, project criteria, paper reading, review drafting, and safe result submission.
 
-This skill handles assigned-paper screening in the connected SLR project. It does not search for papers, change project settings, rotate tokens, download arbitrary URLs, or submit results in bulk.
+This skill handles assigned-paper screening in the connected SLR project. It does not search for papers, change project settings, rotate tokens, download arbitrary URLs, or submit results in bulk. The SLR web application remains the source of truth for project creation, agent connection, paper assignment, token rotation, and final task state.
 
 ## Available MCP tools
 
@@ -28,7 +28,9 @@ Route these commands as follows:
 - `/slr` — show the menu and current connection summary.
 - `/slr setup` — explain connector settings without requesting the token in chat.
 - `/slr status` — call `list_assigned_tasks` with `limit: 1` and report whether the connection works.
-- `/slr tasks` — list assigned tasks; show only concise task and paper metadata.
+- `/slr list` or `/slr tasks` — list assigned tasks; show only concise task and paper metadata.
+- `/slr drafts` — list local draft files; never treat a draft as submitted.
+- `/slr config` — explain the active profile and connector binding without showing secrets.
 - `/slr task <taskId>` — call `get_assigned_task`.
 - `/slr fulltext <taskId>` — call `get_task_fulltext` once and honor `retryAfterSeconds` when pending.
 - `/slr review <taskId>` — run the review state machine below.
@@ -42,13 +44,15 @@ There is no `/slr submit` command. Submission is an internal final step of `/slr
 Follow these states in order:
 
 1. `CONNECTION_CHECK`: confirm that the MCP server is available with a read-only call.
-2. `TASK_SELECTION`: select an `ASSIGNED` task. Never submit for `COMPLETED`.
-3. `PAPER_CONTEXT`: call `get_assigned_task` and read project criteria, instructions, and metadata.
-4. `PAPER_READING`: call `get_task_fulltext`. If the result is pending, stop and tell the user when to retry. Do not tight-poll.
-5. `REVIEW_DRAFT`: compare the paper with inclusion and exclusion criteria. Draft a decision, evidence-based reasoning, and optional structured data.
-6. `USER_CONFIRMATION`: show the exact decision, reasoning, and data that will be sent. Ask for an explicit `confirm` or `cancel`.
-7. `SUBMIT`: call `submit_review_result` only after an affirmative user response. The MCP server asks for an additional final confirmation before its backend POST.
-8. `COMPLETED`: report the accepted result. Do not automatically select another paper.
+2. `PROFILE_CHECK`: identify the active profile/project from connector metadata. If profile selection is ambiguous, stop and ask the user to reconnect the intended profile.
+3. `TASK_SELECTION`: select an `ASSIGNED` task. Never submit for `COMPLETED`.
+4. `PAPER_CONTEXT`: call `get_assigned_task` and read project criteria, instructions, and metadata.
+5. `PAPER_READING`: call `get_task_fulltext`. If the result is pending, stop and tell the user when to retry. Do not tight-poll.
+6. `REVIEW_DRAFT`: compare the paper with inclusion and exclusion criteria. Draft a decision, evidence-based reasoning, and optional structured data.
+7. `DRAFT_PERSISTENCE`: save the candidate under `paper-review/drafts/<taskId>.json` before asking for confirmation. Never include the bearer token or full paper text.
+8. `USER_CONFIRMATION`: show the exact decision, reasoning, and data that will be sent. Ask for an explicit `confirm` or `cancel`.
+9. `SUBMIT`: call `submit_review_result` only after an affirmative user response. The MCP server asks for an additional final confirmation and payload digest before its backend POST.
+10. `RECEIPT`: after a successful response, save a redacted receipt under `paper-review/submitted/<taskId>.json` and report the accepted result. Do not automatically select another paper.
 
 If the user changes the task, changes the draft, answers ambiguously, or says no, return to `REVIEW_DRAFT` or stop without calling the write tool.
 
@@ -75,6 +79,8 @@ Keep `decision` under 100 characters and `reasoning` under 16,000 characters. Ke
 - Never reveal, echo, summarize, store, or request the project token in chat.
 - Never include authorization headers, connector settings, or local environment values in a result.
 - Never call `submit_review_result` from a draft, from an ambiguous response, or without the final host confirmation.
+- Never interpret a local draft, submitted receipt, or audit line as proof that the backend accepted a result; rely on the MCP success response.
+- Never switch profiles inside an already-running MCP process. Reconnect/restart the connector after changing the active profile.
 - Never retry a `409` submission conflict; the task is terminal until the user refreshes it.
 - Never bypass a missing elicitation/approval capability. Explain that the host must support user confirmation.
 

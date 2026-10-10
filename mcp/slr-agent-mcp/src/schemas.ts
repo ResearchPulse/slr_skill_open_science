@@ -18,6 +18,7 @@ export const submitReviewResultSchema = z.object({
 
 export const confirmationAcceptedSchema = z.object({
   confirm: z.literal(true),
+  digest: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 digest shown in the confirmation prompt.'),
 });
 
 export type ListAssignedTasksInput = z.infer<typeof listAssignedTasksSchema>;

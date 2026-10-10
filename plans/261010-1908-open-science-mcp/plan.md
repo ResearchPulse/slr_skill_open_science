@@ -15,7 +15,7 @@ created: 2026-10-10
 
 ## Overview
 
-Turn the existing local MCP prototype into a standalone sibling package that can be installed with `npx github:<org>/slr_skill_open_science`. The package follows the useful separation from `ResearchPulse/slr_skill_claude_science`: an installer, `/slr` skill, local profile/configuration layer, review workspace, and a thin MCP adapter.
+Turn the existing local MCP prototype into a standalone sibling package that can be installed with `npx github:ResearchPulse/slr_skill_open_science`. The package follows the useful separation from `ResearchPulse/slr_skill_claude_science`: an installer, `/slr` skill, local profile/configuration layer, review workspace, and a thin MCP adapter.
 
 The backend remains the source of truth. The package must expose exactly these four MCP tools:
 
@@ -38,11 +38,11 @@ The backend remains the source of truth. The package must expose exactly these f
 | Phase | Name | Status | Depends on |
 |---|---|---|---|
 | 1 | [Package and installer foundation](./phase-01-package-installer.md) | Completed | Design doc |
-| 2 | [Profiles, credentials, and local review workspace](./phase-02-profiles-workspace.md) | Pending | Phase 1 |
-| 3 | [MCP adapter and four-tool contract](./phase-03-mcp-contract.md) | Pending | Phase 1 |
-| 4 | [Open-Science skill and command harness](./phase-04-skill-harness.md) | Pending | Phases 2–3 |
-| 5 | [Confirmation, audit, and security hardening](./phase-05-safety-audit.md) | Pending | Phases 2–4 |
-| 6 | [Release and clean-machine validation](./phase-06-release-validation.md) | Pending | Phases 1–5 |
+| 2 | [Profiles, credentials, and local review workspace](./phase-02-profiles-workspace.md) | Completed | Phase 1 |
+| 3 | [MCP adapter and four-tool contract](./phase-03-mcp-contract.md) | Completed | Phase 1 |
+| 4 | [Open-Science skill and command harness](./phase-04-skill-harness.md) | Completed | Phases 2–3 |
+| 5 | [Confirmation, audit, and security hardening](./phase-05-safety-audit.md) | In Progress | Phases 2–4 |
+| 6 | [Release and clean-machine validation](./phase-06-release-validation.md) | In Progress | Phases 1–5 |
 
 ## Architecture decisions
 
@@ -63,7 +63,7 @@ The backend remains the source of truth. The package must expose exactly these f
 
 ## Success criteria
 
-- A clean machine can install the package with the documented `npx github:<org>/slr_skill_open_science` command.
+- A clean machine can install the package with the documented `npx github:ResearchPulse/slr_skill_open_science` command.
 - Open-Science can discover the `/slr` skill and connect one generated local MCP configuration.
 - The MCP client discovers exactly four tools, with no helper tools exposed.
 - `/slr setup`, `/slr status`, `/slr list`, `/slr review`, and `/slr doctor` have deterministic behavior.

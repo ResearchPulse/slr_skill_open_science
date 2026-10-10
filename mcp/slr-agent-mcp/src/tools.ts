@@ -7,7 +7,8 @@ import {
 } from '@modelcontextprotocol/server';
 import type { McpConfig } from './config.js';
 import { AgentApiClient } from './http-client.js';
-import { redactSecret, toolError, type ToolTextResult } from './errors.js';
+import { AgentApiError, redactSecret, toolError, type ToolTextResult } from './errors.js';
+import { buildConfirmationPayload, confirmationDigest } from './confirmation.js';
 import {
   confirmationAcceptedSchema,
   listAssignedTasksSchema,
@@ -23,26 +24,44 @@ const confirmationRequestedSchema = {
       type: 'boolean' as const,
       title: 'Confirm writing this review result',
     },
+    digest: {
+      type: 'string' as const,
+      title: 'Confirmation digest',
+      description: 'The SHA-256 digest shown in this confirmation request.',
+      pattern: '^[a-f0-9]{64}$',
+    },
   },
-  required: ['confirm'],
+  required: ['confirm', 'digest'],
   additionalProperties: false,
 };
 
-function jsonResult(value: unknown): ToolTextResult {
-  return { content: [{ type: 'text', text: JSON.stringify(value) }] };
+function jsonResult(value: unknown, secret: string): ToolTextResult {
+  return { content: [{ type: 'text', text: redactSecret(JSON.stringify(value), secret) }] };
 }
 
-function markdownResult(markdown: string): ToolTextResult {
-  return { content: [{ type: 'text', text: markdown }] };
+function markdownResult(markdown: string, secret: string): ToolTextResult {
+  return { content: [{ type: 'text', text: redactSecret(markdown, secret) }] };
 }
 
-function confirmationMessage(taskId: string, input: SubmitReviewInput, secret: string): string {
+function safeDisplay(value: string, max = 500): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function safeSecretDisplay(value: string, secret: string, max = 500): string {
+  return safeDisplay(redactSecret(value, secret), max);
+}
+
+function confirmationMessage(taskId: string, input: SubmitReviewInput, config: McpConfig, digest: string): string {
   const reasoningPreview = input.reasoning.length > 500 ? `${input.reasoning.slice(0, 500)}…` : input.reasoning;
   return [
-    `Final confirmation required before writing the review result for task ${redactSecret(taskId, secret)}.`,
-    `Decision: ${redactSecret(input.decision, secret)}`,
-    `Reasoning preview: ${redactSecret(reasoningPreview, secret)}`,
-    'Choose confirm only if this result is ready to be recorded in the SLR project.',
+    'Final confirmation required before writing an SLR review result.',
+    `Profile: ${safeSecretDisplay(config.profileId, config.agentToken, 100)}`,
+    `Project: ${safeSecretDisplay(config.projectName, config.agentToken, 160)} (${safeSecretDisplay(config.projectId, config.agentToken, 160)})`,
+    `Task: ${safeSecretDisplay(taskId, config.agentToken, 160)}`,
+    `Decision: ${safeSecretDisplay(input.decision, config.agentToken, 100)}`,
+    `Reasoning preview (untrusted model text): ${safeSecretDisplay(reasoningPreview, config.agentToken)}`,
+    `Payload digest: ${digest}`,
+    'Choose confirm only if this exact payload is ready to be recorded in the SLR project.',
   ].join('\n');
 }
 
@@ -57,7 +76,7 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     },
     async ({ limit, cursor }): Promise<ToolTextResult> => {
       try {
-        return jsonResult(await client.listAssignedTasks(limit, cursor));
+        return jsonResult(await client.listAssignedTasks(limit, cursor), config.agentToken);
       } catch (error) {
         return toolError(error, config.agentToken);
       }
@@ -74,7 +93,7 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     },
     async ({ taskId }): Promise<ToolTextResult> => {
       try {
-        return jsonResult(await client.getAssignedTask(taskId));
+        return jsonResult(await client.getAssignedTask(taskId), config.agentToken);
       } catch (error) {
         return toolError(error, config.agentToken);
       }
@@ -92,7 +111,7 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     async ({ taskId }): Promise<ToolTextResult> => {
       try {
         const result = await client.getTaskFullText(taskId);
-        return result.kind === 'ready' ? markdownResult(result.markdown) : jsonResult(result);
+        return result.kind === 'ready' ? markdownResult(result.markdown, config.agentToken) : jsonResult(result, config.agentToken);
       } catch (error) {
         return toolError(error, config.agentToken);
       }
@@ -109,9 +128,10 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     },
     async ({ taskId, decision, reasoning, data }, context): Promise<ToolTextResult | InputRequiredResult> => {
       const input: SubmitReviewInput = { decision, reasoning, ...(data === undefined ? {} : { data }) };
+      const digest = confirmationDigest(buildConfirmationPayload(config, taskId, input));
       const response = inputResponse(context.mcpReq.inputResponses, 'confirmation');
       if (response.kind === 'elicit' && response.action !== 'accept') {
-        return jsonResult({ status: 'CANCELLED', message: 'Submission cancelled; no review result was written.' });
+        return jsonResult({ status: 'CANCELLED', message: 'Submission cancelled; no review result was written.' }, config.agentToken);
       }
 
       const confirmation = acceptedContent(context.mcpReq.inputResponses, 'confirmation', confirmationAcceptedSchema);
@@ -119,15 +139,19 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
         return inputRequired({
           inputRequests: {
             confirmation: inputRequired.elicit({
-              message: confirmationMessage(taskId, input, config.agentToken),
+              message: confirmationMessage(taskId, input, config, digest),
               requestedSchema: confirmationRequestedSchema,
             }),
           },
         });
       }
 
+      if (confirmation.digest !== digest) {
+        return toolError(new AgentApiError('Confirmation does not match the current review payload', 409, 'CONFIRMATION_MISMATCH'), config.agentToken);
+      }
+
       try {
-        return jsonResult(await client.submitReviewResult(taskId, input));
+        return jsonResult(await client.submitReviewResult(taskId, input), config.agentToken);
       } catch (error) {
         return toolError(error, config.agentToken);
       }

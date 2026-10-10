@@ -71,7 +71,7 @@ function runMcpStartupProbe(entrypoint, cwd) {
 }
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'slr-open-science-pack-'));
-const cacheRoot = join(tempRoot, 'npm-cache');
+const cacheRoot = process['env']['PACK_SMOKE_CACHE_PATH'] || join(tempRoot, 'npm-cache');
 mkdirSync(cacheRoot, { recursive: true });
 
 try {

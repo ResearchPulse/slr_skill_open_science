@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Open-Science skill and command harness"
-status: pending
+status: completed
 priority: P1
 effort: "1d"
 dependencies: ["phase-02-profiles-workspace", "phase-03-mcp-contract"]
@@ -54,10 +54,10 @@ Modify or create:
 
 ## Todo list
 
-- [ ] Commands and fallback chat wording.
-- [ ] Choice harness for profiles/tasks.
-- [ ] Connector generation/import instructions.
-- [ ] Skill safety and review-policy references.
+- [x] Commands and fallback chat wording.
+- [x] Choice harness for profiles/tasks.
+- [x] Connector generation/import instructions.
+- [x] Skill safety and review-policy references.
 
 ## Success criteria
 

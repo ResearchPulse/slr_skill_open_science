@@ -16,7 +16,7 @@ Create the standalone package boundary and the `npx` entry point. Keep the packa
 ## Key insights
 
 - The current MCP package is nested under `mcp/slr-agent-mcp`; it is reusable but not yet the root-level Claude-style distribution.
-- `npx github:<org>/slr_skill_open_science` requires a root `package.json` with a `bin` entry and all runtime artifacts included in the package.
+- `npx github:ResearchPulse/slr_skill_open_science` requires a root `package.json` with a `bin` entry and all runtime artifacts included in the package.
 - Runtime review files must not be placed inside the installed package.
 
 ## Requirements

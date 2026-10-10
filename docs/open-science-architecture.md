@@ -4,7 +4,7 @@
 
 This document defines the approved architecture for distributing the SLR `/slr` skill and its local MCP connector to AIPOCH Open-Science.
 
-The packaging experience follows the useful parts of `ResearchPulse/slr_skill_claude_science`: one `npx github:<org>/slr_skill_open_science` entrypoint, an installer, project profiles, local review drafts, and an audit trail. The runtime remains Node.js/TypeScript because the backend and current MCP implementation already use that stack.
+The packaging experience follows the useful parts of `ResearchPulse/slr_skill_claude_science`: one `npx github:ResearchPulse/slr_skill_open_science` entrypoint, an installer, project profiles, local review drafts, and an audit trail. The runtime remains Node.js/TypeScript because the backend and current MCP implementation already use that stack.
 
 ## Approved decisions
 
@@ -21,7 +21,7 @@ The packaging experience follows the useful parts of `ResearchPulse/slr_skill_cl
 
 ## Goals
 
-- Install or update the skill and connector with one `npx github:<org>/slr_skill_open_science` command.
+- Install or update the skill and connector with one `npx github:ResearchPulse/slr_skill_open_science` command.
 - Automatically register an Open-Science local connector when the Open-Science CLI is available.
 - Print an importable connector configuration when automatic registration is unavailable.
 - Expose only `list_assigned_tasks`, `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
@@ -174,7 +174,7 @@ Chosen because it preserves the desired user experience while matching the targe
 
 ## Acceptance criteria
 
-- `npx github:<org>/slr_skill_open_science` installs or updates the skill and produces a usable connector configuration.
+- `npx github:ResearchPulse/slr_skill_open_science` installs or updates the skill and produces a usable connector configuration.
 - A registered connector starts without Python and discovers exactly four tools.
 - `/slr status` works through `list_assigned_tasks`.
 - Profile switching never mixes project tokens and visibly identifies the active project.

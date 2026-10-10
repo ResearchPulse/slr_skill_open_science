@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "Release and clean-machine validation"
-status: pending
+status: in-progress
 priority: P1
 effort: "1d"
 dependencies: ["phase-01-package-installer", "phase-02-profiles-workspace", "phase-03-mcp-contract", "phase-04-skill-harness", "phase-05-safety-audit"]
@@ -46,11 +46,11 @@ Create or modify:
 
 ## Todo list
 
-- [ ] Automated package and installer gate.
-- [ ] Four-tool discovery gate.
-- [ ] Clean-machine setup gate.
-- [ ] Manual Open-Science review/submit gate.
-- [ ] Secret and regression scan.
+- [x] Automated package and installer gate.
+- [x] Four-tool discovery gate.
+- [ ] Clean-machine setup gate (blocked by npm install hanging in current registry/cache environment).
+- [ ] Manual Open-Science review/submit gate (requires an installed Open-Science CLI and test project).
+- [x] Secret and regression scan.
 - [ ] Supply-chain and dependency audit gate.
 
 ## Success criteria

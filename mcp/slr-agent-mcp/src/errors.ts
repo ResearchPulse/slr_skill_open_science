@@ -41,7 +41,7 @@ export function toolError(error: unknown, secret?: string): ToolTextResult {
     };
   }
 
-  const message = error instanceof Error ? error.message : 'Unexpected MCP server error';
+  const message = 'Unexpected MCP server error; inspect the structured error code and retry only a read-only operation if appropriate.';
   return {
     isError: true,
     content: [{

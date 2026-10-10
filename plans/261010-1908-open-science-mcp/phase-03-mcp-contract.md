@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "MCP adapter and four-tool contract"
-status: pending
+status: completed
 priority: P1
 effort: "1d"
 dependencies: ["phase-01-package-installer"]
@@ -59,11 +59,11 @@ Modify or extend:
 
 ## Todo list
 
-- [ ] Four-tool introspection test.
-- [ ] Contract fixture tests.
-- [ ] Confirmation and conflict tests.
-- [ ] Payload-digest mismatch and oversized-response tests.
-- [ ] Tarball execution test.
+- [x] Four-tool introspection test.
+- [x] Contract fixture tests.
+- [x] Confirmation and conflict tests.
+- [x] Payload-digest mismatch and oversized-response tests.
+- [ ] Tarball execution test (clean install requires a network-enabled registry/cache).
 
 ## Success criteria
 

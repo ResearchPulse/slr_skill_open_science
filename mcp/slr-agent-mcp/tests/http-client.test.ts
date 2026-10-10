@@ -7,6 +7,11 @@ const config: McpConfig = {
   apiBaseUrl: 'https://slr.example.test/api',
   agentToken: 'slrp_test_secret',
   timeoutMs: 5_000,
+  profileId: 'test-profile',
+  projectId: 'project-1',
+  projectName: 'Test project',
+  maxJsonResponseBytes: 1_024 * 1_024,
+  maxMarkdownResponseBytes: 8 * 1_024 * 1_024,
 };
 
 describe('AgentApiClient', () => {
@@ -107,5 +112,20 @@ describe('AgentApiClient', () => {
       reasoning: 'x'.repeat(31_000),
     })).rejects.toMatchObject({ code: 'REQUEST_TOO_LARGE' });
     expect(requestCount).toBe(0);
+  });
+
+  it('rejects an oversized full-text response before returning it', async () => {
+    const limitedConfig = { ...config, maxMarkdownResponseBytes: 16_384 };
+    const client = new AgentApiClient(limitedConfig, async () => new Response('x'.repeat(16_385), { status: 200 }));
+    await expect(client.getTaskFullText('task-1')).rejects.toMatchObject({ code: 'RESPONSE_TOO_LARGE' });
+  });
+
+  it('rejects an oversized JSON response before parsing it', async () => {
+    const limitedConfig = { ...config, maxJsonResponseBytes: 16_384 };
+    const client = new AgentApiClient(limitedConfig, async () => new Response(JSON.stringify({
+      success: true,
+      data: { items: ['x'.repeat(16_385)] },
+    }), { status: 200, headers: { 'content-length': '20000' } }));
+    await expect(client.listAssignedTasks(1)).rejects.toMatchObject({ code: 'RESPONSE_TOO_LARGE' });
   });
 });

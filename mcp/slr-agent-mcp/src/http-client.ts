@@ -27,6 +27,48 @@ function retryAfterSeconds(value: string | null): number {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.ceil(parsed) : 10;
 }
 
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel();
+    throw new AgentApiError('SLR API response exceeded the configured size limit', 502, 'RESPONSE_TOO_LARGE');
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
+      throw new AgentApiError('SLR API response exceeded the configured size limit', 502, 'RESPONSE_TOO_LARGE');
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new AgentApiError('SLR API response exceeded the configured size limit', 502, 'RESPONSE_TOO_LARGE');
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 function wait(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
@@ -67,7 +109,7 @@ export class AgentApiClient {
       };
     }
 
-    return { kind: 'ready', markdown: await response.text() };
+    return { kind: 'ready', markdown: await readBoundedText(response, this.config.maxMarkdownResponseBytes) };
   }
 
   async submitReviewResult(taskId: string, input: SubmitReviewInput): Promise<AgentTask> {
@@ -107,6 +149,7 @@ export class AgentApiClient {
       try {
         const response = await this.fetchFunction(url, { ...init, headers, signal: controller.signal });
         if (method === 'GET' && TRANSIENT_STATUSES.has(response.status) && attempt === 0) {
+          await response.body?.cancel();
           attempt += 1;
           await wait(100);
           continue;
@@ -144,7 +187,7 @@ export class AgentApiClient {
   }
 
   private async readJson(response: Response): Promise<unknown> {
-    const text = await response.text();
+    const text = await readBoundedText(response, this.config.maxJsonResponseBytes);
     if (!text) return undefined;
     try {
       return JSON.parse(text) as unknown;

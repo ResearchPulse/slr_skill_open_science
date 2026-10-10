@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Profiles, credentials, and local review workspace"
-status: pending
+status: completed
 priority: P1
 effort: "1d"
 dependencies: ["phase-01-package-installer"]
@@ -55,10 +55,10 @@ Create or modify:
 
 ## Todo list
 
-- [ ] Profile schema and migration marker.
-- [ ] Native credential path and fallback path.
-- [ ] Multi-project isolation tests.
-- [ ] Runtime workspace and audit format.
+- [x] Profile schema and migration marker.
+- [x] Native Open-Science credential-reference path and manual import fallback.
+- [x] Multi-project isolation tests.
+- [x] Runtime workspace and audit format.
 
 ## Success criteria
 
