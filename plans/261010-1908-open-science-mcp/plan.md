@@ -24,7 +24,7 @@ The backend remains the source of truth. The package must expose exactly these f
 3. `get_task_fulltext`
 4. `submit_review_result`
 
-`submit_review_result` is write-capable and requires both the skill-level final confirmation and MCP elicitation confirmation immediately before the POST.
+`submit_review_result` is write-capable and requires both the skill-level final confirmation and a second digest-bound confirmation call immediately before the POST. The handshake does not depend on host MCP elicitation support.
 
 ## Design reference
 
@@ -59,7 +59,7 @@ The backend remains the source of truth. The package must expose exactly these f
 - Existing SLR backend routes and API contract.
 - Node.js 20+ and npm/npx.
 - Open-Science CLI/skill/connector behavior documented at [aipoch.com/docs](https://aipoch.com/docs/).
-- MCP TypeScript SDK stdio server and elicitation support.
+- MCP TypeScript SDK stdio server and host-independent confirmation handshake.
 
 ## Success criteria
 

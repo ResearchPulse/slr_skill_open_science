@@ -16,7 +16,7 @@ The packaging experience follows the useful parts of `ResearchPulse/slr_skill_cl
 | Host | Open-Science local connector | Open-Science manages local connectors, skills, permissions, and credentials |
 | Profiles | Multi-project profiles | A user can manage multiple SLR projects without mixing tokens |
 | Drafts | Local `paper-review/` workspace | Keeps draft/edit/submit workflow auditable and recoverable |
-| Submission safety | Skill confirmation plus MCP elicitation | The user must approve the draft and then confirm immediately before the backend write |
+| Submission safety | Skill confirmation plus digest-bound MCP confirmation handshake | The user must approve the draft and then confirm the exact payload immediately before the backend write |
 | Credential priority | Open-Science credential binding first; protected local fallback only when unavailable | Avoids duplicating secret storage when the host can securely manage it |
 
 ## Goals
@@ -134,12 +134,12 @@ The raw project token is never stored in Git, the skill, review drafts, `audit.j
    → user reviews exact payload
    → user confirms
    → submit_review_result
-   → MCP elicitation confirmation
+   → second submit call with matching digest
    → one backend POST
    → audit record + submitted record
 ```
 
-`submit_review_result` must not POST when the user cancels, the host declines elicitation, the confirmation content is invalid, or the connector lacks elicitation capability. The elicitation confirmation is bound to a canonical digest of the exact profile, task, decision, reasoning, and data payload. A 409 result is terminal and must not be retried.
+`submit_review_result` must not POST on its first call, when the user cancels, when the confirmation content is invalid, or when the digest does not match. The second call is bound to a canonical digest of the exact profile, task, decision, reasoning, and data payload. A 409 result is terminal and must not be retried.
 
 ## Tool contract
 
@@ -180,7 +180,7 @@ Chosen because it preserves the desired user experience while matching the targe
 - Profile switching never mixes project tokens and visibly identifies the active project.
 - Drafts can be reviewed/edited locally and audit records contain no raw token.
 - Declined first confirmation causes no write.
-- Declined MCP elicitation causes no write.
+- Missing or declined second digest confirmation causes no write.
 - Accepted confirmation produces exactly one POST.
 - A duplicate submission is surfaced as terminal 409 and is not retried.
 - The packed artifact can be installed and launched outside the backend repository.
@@ -192,7 +192,7 @@ Chosen because it preserves the desired user experience while matching the targe
 | Open-Science CLI changes | Automatic registration breaks | Keep generated JSON import fallback and version-check CLI capabilities |
 | Native credential API unavailable | Token setup becomes manual | OS-backed secure store; otherwise session-only binding and fail-closed persistence |
 | Profile changes while connector is running | Wrong project token | Require reconnect/restart and show active profile/project |
-| Host does not support MCP elicitation | Unsafe write path | Refuse to submit; do not silently downgrade to one confirmation |
+| Host does not support MCP elicitation | Confirmation path unavailable | Use the explicit second-call digest handshake; never silently downgrade to one confirmation |
 | GitHub `npx` package lacks built artifacts | Installer starts but MCP fails | Prepack compile, tarball smoke test, and release checklist |
 | Mutable GitHub ref or compromised release path | Installer executes untrusted code | Use immutable production tags/commits, lockfiles, revision display, and artifact verification |
 

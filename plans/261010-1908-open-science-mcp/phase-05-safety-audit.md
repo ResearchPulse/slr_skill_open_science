@@ -16,19 +16,19 @@ Prove the two-step write boundary and make the local review trail useful without
 ## Key insights
 
 - Open-Science permission mode is a host-level control, but it is not sufficient as the only product guarantee for this domain write.
-- The skill-level confirmation and MCP elicitation should be independent gates immediately before the one write request.
+- The skill-level confirmation and digest-bound second MCP call should be independent gates immediately before the one write request.
 - A declined or failed confirmation must leave a resumable draft and must not create a submitted record.
 
 ## Requirements
 
 - Confirmation summary includes active profile/project, task identifier, decision, concise sanitized reasoning preview, and a canonical payload digest.
 - First gate is explicit skill interaction after the draft is shown.
-- Second gate is MCP elicitation at `submit_review_result` execution time.
+- Second gate is a second `submit_review_result` call with `confirmation.confirm=true` and the matching digest.
 - Exactly one POST on a confirmed submission; never retry `409` duplicate/terminal conflicts.
 - Audit events cover draft created, confirmation accepted/declined, submit attempted, submitted, conflict, and failure.
 - Audit records exclude bearer tokens, authorization headers, full paper text, and unbounded model reasoning.
 - Reopening a draft never implies approval.
-- The MCP confirmation response must include the digest that was shown; a boolean-only or stale response is rejected.
+- The second MCP call must include the digest that was shown; a boolean-only or stale response is rejected.
 
 ## Architecture
 
@@ -48,7 +48,7 @@ Modify or create:
 
 1. Specify draft state transitions and terminal states.
 2. Add the skill-level confirmation checklist and exact payload/digest preview policy.
-3. Add/verify server-side elicitation, digest binding, and decline behavior.
+3. Add/verify the host-independent second-call confirmation, digest binding, and decline behavior.
 4. Add redacted audit and receipt writers with bounded fields.
 5. Test process interruption between each gate and after a successful POST.
 6. Run a secret scan over source, test fixtures, package output, and generated artifacts.
@@ -58,6 +58,7 @@ Modify or create:
 - [x] Draft state machine documented.
 - [x] Both confirmation gates tested.
 - [x] Audit and receipt redaction tested.
+- [x] Real stdio acceptance harness covers declined, accepted, and terminal-conflict submission paths.
 - [ ] Duplicate submission and interrupted-flow behavior tested end-to-end through a packed install.
 
 ## Success criteria
@@ -69,7 +70,7 @@ Modify or create:
 
 ## Risk assessment
 
-- **Risk:** confirmation is bypassed by direct MCP invocation. **Mitigation:** enforce elicitation in the write tool itself, not only in the skill.
+- **Risk:** confirmation is bypassed by direct MCP invocation. **Mitigation:** enforce the second-call digest in the write tool itself, not only in the skill.
 - **Risk:** a confirmation is replayed for a changed payload. **Mitigation:** one-request payload digest binding and fail-closed mismatch handling.
 - **Risk:** audit files grow without bound. **Mitigation:** bound event fields and document rotation/retention without deleting active drafts.
 

@@ -18,6 +18,8 @@ npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup --json
 
 `setup` also copies the managed skill directory to `~/.agents/skills/slr`. In Open-Science, import that installed directory from Settings → Skills → Import installed skills, then enable `/slr`. Use `--skill-dir PATH` to choose another local import directory. If an unmanaged skill already exists at the target, the command stops instead of overwriting it.
 
+After the skill is enabled, `/slr setup` is the quick in-chat setup check. It calls the read-only task listing, reports the connected project and assigned-task state, or shows only the missing connector settings. It never asks for the project token in chat and cannot modify Open-Science connector settings.
+
 Use `doctor` to inspect packaged assets and Open-Science CLI availability:
 
 ```powershell
@@ -57,7 +59,7 @@ npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup --profile afl
 - `skill/slr/` — `/slr` skill instructions for Open-Science task discovery, review drafting, and confirmation-gated submission.
 - `docs/SLR_MCP_OPEN_SCIENCE_SETUP.md` — setup and troubleshooting guide.
 
-Submission has exactly two confirmation gates: `/slr review` shows the saved draft and asks the user for `confirm` or `cancel`; only after `confirm` does it call `submit_review_result`. The server then requires MCP elicitation with `confirm: true` and a matching payload digest immediately before the single backend POST. If either gate is declined or unavailable, no write is sent.
+Submission has exactly two confirmation gates: `/slr review` shows the saved draft and asks the user for `confirm` or `cancel`; only after `confirm` does it call `submit_review_result`. The first tool call returns a matching payload digest without writing, and the second call must include `confirmation: { confirm: true, digest }` immediately before the single backend POST. If either gate is declined, unavailable, or mismatched, no write is sent.
 
 ## Root MCP connector
 
@@ -87,3 +89,15 @@ npx slr-agent-mcp
 ```
 
 The local package communicates over stdio. The token is passed only through the protected connector/runtime environment and is sent to the backend only as an `Authorization: Bearer` header. Never place the project token in chat, prompts, the skill, source code, source control, issues, screenshots, or logs. If it is exposed, rotate it in SLR and update the connector environment.
+
+## Acceptance harness
+
+The repository includes a deterministic harness that starts the compiled MCP over stdio and uses a local fake SLR API. It validates the real protocol boundary without touching the backend or requiring a project token:
+
+```powershell
+npm run typecheck:mcp
+npm run test:harness
+npm test
+```
+
+The harness checks exact four-tool discovery, bearer propagation, paginated task lookup, `202` full-text processing, declined submission with zero POSTs, digest-bound confirmation, one successful POST, and terminal `409` behavior without retry. `npm test` includes the harness through the MCP workspace test suite. `npm run pack:check` additionally validates a clean packed install; it requires npm registry/cache access for dependency installation.

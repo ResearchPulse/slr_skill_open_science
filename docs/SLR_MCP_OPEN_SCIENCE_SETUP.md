@@ -28,6 +28,10 @@ npx --yes github:ResearchPulse/slr_skill_open_science#v0.1.0 setup --json
 
 `setup` đồng thời copy thư mục skill được quản lý vào `~/.agents/skills/slr`. Trong Open-Science, vào **Settings → Skills → Import installed skills**, import thư mục đã cài đặt này rồi bật skill `/slr`. Có thể dùng `--skill-dir PATH` nếu muốn đặt skill ở thư mục local khác. Nếu thư mục đích đã có skill không do package quản lý, lệnh sẽ dừng để tránh ghi đè.
 
+Sau khi bật skill, dùng `/slr setup` như lệnh setup nhanh trong chat. Skill sẽ gọi yêu cầu chỉ đọc `list_assigned_tasks(limit: 1)` để kiểm tra connector. Nếu thành công, skill báo project và trạng thái task; nếu thất bại, skill chỉ hướng dẫn phần connector còn thiếu. Skill không tự thay đổi Settings của Open-Science và không yêu cầu dán token vào chat.
+
+Không gửi `SLR_AGENT_TOKEN` vào chat. Hãy dán token một lần vào **Settings → Connectors → SLR → Environment variables → SLR_AGENT_TOKEN → Access token Credential**. Nếu token đã lỡ xuất hiện trong chat, hãy rotate token trong SLR rồi cập nhật Credential mới.
+
 Dùng `doctor` để kiểm tra asset đã được đóng gói và khả năng có `open-science` CLI:
 
 ```powershell
@@ -129,11 +133,11 @@ Chọn permission mode **Ask for approval** trong Open-Science.
 `submit_review_result` là write tool. Luồng ghi có đúng hai bước xác nhận độc lập:
 
 1. Skill `/slr review` lưu draft, hiển thị decision, reasoning và data cuối cùng rồi hỏi `confirm` hoặc `cancel`. Chỉ câu trả lời `confirm` mới được gọi write tool.
-2. MCP server yêu cầu MCP elicitation với `confirm: true` và payload digest khớp với profile, task, decision, reasoning và data hiện tại; chỉ sau đó mới gửi đúng một POST đến backend.
+2. Lần gọi write đầu tiên chỉ tạo yêu cầu xác nhận và trả payload digest; không gửi request ghi. Sau khi người dùng xác nhận digest, skill gọi lại chính `submit_review_result` với `confirmation: { confirm: true, digest }`. Chỉ sau đó server mới gửi đúng một POST đến backend.
 
-Permission mode của host không thay thế hai bước trên. Nếu một bước bị từ chối, digest không khớp, hoặc host không hỗ trợ elicitation/approval thì không có request ghi nào được gửi.
+Permission mode của host không thay thế hai bước trên. Nếu một bước bị từ chối hoặc digest không khớp thì không có request ghi nào được gửi. Cơ chế này không phụ thuộc vào MCP elicitation nên tương thích với Open-Science hiện tại.
 
-Nếu host không hỗ trợ elicitation/approval, không được bypass. Hãy bật capability tương ứng hoặc dừng trước bước ghi.
+Nếu người dùng không xác nhận lượt thứ hai, dừng ở draft; không retry và không gửi POST.
 
 ## 5. Dùng skill `/slr`
 
@@ -148,6 +152,7 @@ Nếu host không hỗ trợ elicitation/approval, không được bypass. Hãy 
 /slr review <taskId>
 /slr drafts
 /slr config
+/slr help
 ```
 
 Không có `/slr submit`; submit chỉ là bước cuối bên trong `/slr review` sau xác nhận rõ ràng.

@@ -144,7 +144,7 @@ Usage:
   npx github:ResearchPulse/slr_skill_open_science [command]
 
 Commands:
-  setup     Create/inspect a profile and show connector setup
+  setup     Package setup: inspect/create a profile and show connector setup
   profile   Manage project profiles (create, list, use, inspect, remove)
   workspace Initialize or inspect the local review workspace
   skill     Install or update the /slr skill for Open-Science import
@@ -152,6 +152,13 @@ Commands:
   doctor    Check package assets, profiles, and Open-Science CLI availability
   update    Show update guidance without changing existing profiles
   help      Show this help
+
+In-chat /slr commands (after the skill is imported):
+  /slr help  Show the SLR command menu and confirmation rule
+  /slr setup Run the read-only quick check via list_assigned_tasks(limit: 1)
+
+The package command slr setup installs/prepares local assets and connector
+configuration; it is different from the in-chat /slr setup check.
 
 Internal:
   --mcp     Start the local MCP stdio server with the current environment
@@ -162,8 +169,10 @@ Setup flags:
   --skill-dir PATH  override the local skill import directory
   --register   register the secret-free connector through the Open-Science CLI
 
-The installer never asks for or prints the project token. Configure credentials
-through the Open-Science connector or a protected runtime environment.`);
+Credentials:
+  Bind the Open-Science Credential to SLR_AGENT_TOKEN in the protected
+  connector/runtime environment. Never paste the token into chat, CLI flags,
+  source files, or logs; this help output contains no secret value.`);
 }
 
 function printSetup(report, asJson) {
@@ -295,7 +304,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
         'Connect the ChatGPT/Open-Science agent to the SLR project in the SLR web UI.',
         'Create an Open-Science token credential and bind it to SLR_AGENT_TOKEN.',
         'Import the secret-free connector configuration and enable the /slr skill.',
-        'Run /slr status before reviewing a paper.',
+        'Run /slr setup before reviewing a paper.',
       ],
     };
     if (asJson) printValue(value, true);

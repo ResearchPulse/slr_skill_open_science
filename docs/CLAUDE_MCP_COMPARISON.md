@@ -11,7 +11,7 @@ Reference compared: [ResearchPulse/slr_skill_claude_science](https://github.com/
 | Reads | MCP tools | Direct Python API client, with MCP fallback for sandbox/network limitations |
 | Drafts/audit | Draft is held in the conversation/skill flow | Local `paper-review/` drafts, submitted records, and `audit.jsonl` |
 | Token storage | Connector environment variables; never request the token in chat | Local `~/.config/slr` profiles; the skill permits token entry in chat and masks output |
-| Confirmation | Skill confirmation plus MCP elicitation immediately before the POST | Skill-level approval before calling `submit_result` |
+| Confirmation | Skill confirmation plus digest-bound second MCP call immediately before the POST | Skill-level approval before calling `submit_result` |
 | Installation | Configure the local MCP connector with `npx slr-agent-mcp` after publishing | `npx github:ResearchPulse/slr_skill_claude_science` runs an installer and edits Claude integrations |
 
 ## Decision

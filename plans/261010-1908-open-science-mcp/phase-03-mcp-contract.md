@@ -17,7 +17,7 @@ Consolidate the existing TypeScript MCP implementation under the new package bou
 
 - The backend contract is already implemented under `/api/agent/v1`; the adapter should translate transport and schema concerns only.
 - The existing implementation already has the four required tool names and safety-oriented HTTP behavior; preserve it and integrate it rather than redesigning the API.
-- `submit_review_result` must not become an implicit auto-approval path when the host does not support elicitation.
+- `submit_review_result` must not become an implicit auto-approval path when the host does not support elicitation; use the explicit second-call digest handshake.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ Consolidate the existing TypeScript MCP implementation under the new package bou
 - Bearer token injection only in the HTTP client.
 - GET-only retry behavior; preserve `Retry-After`; do not retry terminal duplicate submission conflicts.
 - HTTPS enforcement except explicitly allowed loopback development URLs.
-- Final confirmation elicitation immediately before the single submit POST.
+- Final confirmation call with the exact payload digest immediately before the single submit POST.
 - Confirmation must bind to a canonical payload digest covering profile, task, decision, reasoning, and data.
 - Redacted tool errors and no token leakage in logs or results.
 - Bounded JSON/Markdown response bodies and sanitized URL/error handling.
@@ -69,12 +69,12 @@ Modify or extend:
 
 - MCP client reports exactly four tools with stable names.
 - All requests are project-scoped and authenticated through one configured bearer credential.
-- No POST is issued when confirmation is declined or unavailable.
+- No POST is issued when confirmation is declined, missing, or unavailable.
 - Existing MCP unit/integration tests pass from the standalone package.
 
 ## Risk assessment
 
-- **Risk:** SDK upgrades alter elicitation APIs. **Mitigation:** pin compatible SDK range and isolate confirmation adapter behind a small interface.
+- **Risk:** SDK upgrades alter input-required/elicitation APIs. **Mitigation:** keep the write safety boundary in the tool schema and digest handshake, independent of optional host capability.
 - **Risk:** package relocation breaks imports or build paths. **Mitigation:** compile, pack, and execute from a temporary package location.
 - **Risk:** a large or malicious response exhausts the local process. **Mitigation:** bounded stream reads and abort-on-limit tests.
 

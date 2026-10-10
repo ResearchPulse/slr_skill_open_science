@@ -40,7 +40,7 @@ Create or modify:
 2. Run package tests and verify stdio stdout contains protocol frames only.
 3. Pack the package, install it into a temporary directory, and execute the bin entry point.
 4. Execute the manual Open-Science acceptance flow with a non-production project token.
-5. Verify the two-step confirmation with accepted, declined, and unavailable-elicitation cases.
+5. Verify the two-step confirmation with accepted, declined, stale-digest, and host-without-elicitation cases.
 6. Review docs, version compatibility, release files, and rollback/update behavior.
 7. Block release if secure credential storage, immutable ref verification, payload-digest confirmation, or response limits are missing.
 
