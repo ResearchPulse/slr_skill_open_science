@@ -214,3 +214,59 @@ test('connector registration falls back to updating by stable name when add is r
     ['connector', 'enable', 'slr-default'],
   ]);
 });
+
+test('connector registration recognizes nested connector configuration output', () => {
+  const calls = [];
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr.example.test/api',
+    connectorName: 'slr-default',
+  };
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[1] === 'list') {
+      return {
+        status: 0,
+        error: undefined,
+        stdout: JSON.stringify({ items: [{ id: 'nested-slr', config: { name: 'gpt', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp'] } }] }),
+      };
+    }
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run), {
+    registered: true,
+    enabled: true,
+    connector: 'nested-slr',
+    updated: true,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['connector', 'list', '--json'],
+    ['connector', 'update', 'nested-slr', '--json'],
+    ['connector', 'enable', 'nested-slr'],
+  ]);
+});
+
+test('connector registration preserves a structured Open-Science error code', () => {
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr.example.test/api',
+    connectorName: 'slr-default',
+  };
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args) => {
+    if (args[1] === 'list') return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [] }) };
+    return { status: 1, error: undefined, stdout: '', stderr: JSON.stringify({ error: { code: 'invalid_configuration' } }) };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run), {
+    registered: false,
+    reason: 'open-science-connector-add-failed:invalid_configuration',
+    exitCode: 1,
+  });
+});

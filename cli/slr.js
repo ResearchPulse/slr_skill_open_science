@@ -107,6 +107,7 @@ function connectorRecords(value) {
     if (!candidate || typeof candidate !== 'object') return;
     if (connectorIdFromRecord(candidate) && (
       candidate.name || candidate.connectorName || candidate.displayName || candidate.connector?.name
+      || candidate.config?.name || candidate.config?.displayName || candidate.config?.connector?.name
     )) records.push(candidate);
     Object.values(candidate).forEach(visit);
   };
@@ -115,19 +116,34 @@ function connectorRecords(value) {
 }
 
 function connectorIdFromRecord(record) {
-  return record?.id || record?.connectorId || record?.connector?.id || record?.name || null;
+  return record?.id || record?.connectorId || record?.connector?.id
+    || record?.config?.id || record?.config?.connectorId || record?.name || null;
 }
 
 function existingConnectorId(stdout, connector) {
   const records = connectorRecords(parseJsonOutput(stdout));
   const match = records.find(record => {
-    const names = [record?.id, record?.name, record?.connectorName, record?.displayName, record?.connector?.name];
+    const names = [
+      record?.id,
+      record?.name,
+      record?.connectorName,
+      record?.displayName,
+      record?.connector?.name,
+      record?.config?.name,
+      record?.config?.displayName,
+      record?.config?.connector?.name,
+    ];
     if (names.includes(connector.name) || names.includes(connector.displayName)) return true;
     const serialized = JSON.stringify(record);
-    return record?.command === connector.command
-      && serialized.includes('slr_skill_open_science');
+    return serialized.includes('slr_skill_open_science')
+      && (record?.command === connector.command || record?.config?.command === connector.command);
   });
   return match ? connectorIdFromRecord(match) : null;
+}
+
+function failureCode(result) {
+  const value = parseJsonOutput(result?.stderr) || parseJsonOutput(result?.stdout);
+  return value?.error?.code || value?.code || null;
 }
 
 function connectorIdFromAddOutput(stdout, fallback) {
@@ -182,7 +198,7 @@ export function registerConnector(profile, report, run = openScienceCommand) {
   if (result.error || result.status !== 0) {
     return {
       registered: false,
-      reason: `open-science-connector-${operation}-failed`,
+      reason: `open-science-connector-${operation}-failed${failureCode(result) ? `:${failureCode(result)}` : ''}`,
       exitCode: result.status ?? null,
     };
   }
