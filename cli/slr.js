@@ -1,6 +1,7 @@
-import { existsSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createProfile,
@@ -8,14 +9,20 @@ import {
   getProfile,
   listProfiles,
   removeProfile,
+  configRootFor,
   updateProfile,
   useProfile,
 } from './profile-store.js';
 import { installSkill } from './skill-store.js';
+import { prepareProfile, testProfileConnection } from './setup.js';
 import { initializeWorkspace, listAudit, listDrafts } from './workspace.js';
 
 const DEFAULT_COMMAND = 'setup';
 const CREDENTIAL_OPTION_PREFIXES = ['--token', '--agent-token', '--api-key', '--password', '--secret'];
+const VALUE_FLAGS = new Set([
+  '--profile', '--name', '--api-base-url', '--project-id', '--project-name',
+  '--credential-id', '--connector-id', '--connector-name', '--skill-dir', '--limit',
+]);
 
 function hasFlag(args, flag) {
   return args.includes(flag);
@@ -24,6 +31,18 @@ function hasFlag(args, flag) {
 function flagValue(args, flag) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+function firstCommand(args, fallback = DEFAULT_COMMAND) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg.startsWith('--')) {
+      if (VALUE_FLAGS.has(arg)) index += 1;
+      continue;
+    }
+    return arg;
+  }
+  return fallback;
 }
 
 function profileNameFrom(args) {
@@ -46,7 +65,7 @@ function connectorConfig(profile) {
     displayName: `SLR (${profile.projectName || profile.name})`,
     transport: 'stdio',
     command: 'npx',
-    args: ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp'],
+    args: ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', profile.name],
     env: {
       SLR_API_BASE_URL: profile.apiBaseUrl,
       SLR_PROFILE_ID: profile.name,
@@ -54,15 +73,33 @@ function connectorConfig(profile) {
       ...(profile.projectName ? { SLR_PROJECT_NAME: profile.projectName } : {}),
     },
     envCredentialIds: profile.credentialId ? { SLR_AGENT_TOKEN: profile.credentialId } : {},
-    requiredCredentialEnvironment: ['SLR_AGENT_TOKEN'],
-    note: 'Bind SLR_AGENT_TOKEN to an Open-Science credential. This configuration contains no secret value.',
+    requiredCredentialEnvironment: [],
+    note: 'The MCP launcher reads the selected local profile token. An Open-Science credential may be bound to SLR_AGENT_TOKEN as an optional host-managed override; this configuration contains no secret value.',
   };
 }
 
+export function writeConnectorConfig(profile, environment = process.env) {
+  const directory = join(configRootFor(environment), 'connectors');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const target = join(directory, `${profile.name}.json`);
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(connectorConfig(profile), null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx',
+  });
+  try { chmodSync(temporary, 0o600); } catch { /* Windows may not support POSIX modes. */ }
+  try {
+    renameSync(temporary, target);
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+  return target;
+}
+
 function registerConnector(profile, report) {
-  if (!profile.credentialId) throw new Error('connector registration requires --credential-id for an existing Open-Science credential');
   if (!report.openScienceCli.available || !report.openScienceCli.executable) {
-    throw new Error('Open-Science CLI was not detected; use `slr config` and import the generated JSON manually');
+    return { registered: false, reason: 'open-science-cli-not-detected' };
   }
   const result = spawnSync(report.openScienceCli.executable, ['connector', 'add', '--json'], {
     input: `${JSON.stringify(connectorConfig(profile))}\n`,
@@ -73,7 +110,7 @@ function registerConnector(profile, report) {
     windowsHide: true,
   });
   if (result.error || result.status !== 0) {
-    throw new Error('Open-Science connector registration failed; use `slr config` for manual import');
+    return { registered: false, reason: 'open-science-connector-registration-failed' };
   }
   return { registered: true, connector: profile.connectorName || `slr-${profile.name}` };
 }
@@ -144,7 +181,7 @@ Usage:
   npx github:ResearchPulse/slr_skill_open_science [command]
 
 Commands:
-  setup     Package setup: inspect/create a profile and show connector setup
+  setup     Interactive setup: copy skill, save URL/token, test API, register MCP
   profile   Manage project profiles (create, list, use, inspect, remove)
   workspace Initialize or inspect the local review workspace
   skill     Install or update the /slr skill for Open-Science import
@@ -167,24 +204,29 @@ Setup flags:
   --profile NAME --api-base-url URL --project-id ID --credential-id ID
   --workspace   initialize paper-review/ for the selected profile
   --skill-dir PATH  override the local skill import directory
-  --register   register the secret-free connector through the Open-Science CLI
+  --register   force connector registration (setup attempts it by default)
+  --no-register skip connector registration
 
 Credentials:
-  Bind the Open-Science Credential to SLR_AGENT_TOKEN in the protected
-  connector/runtime environment. Never paste the token into chat, CLI flags,
-  source files, or logs; this help output contains no secret value.`);
+  Setup asks for the token with hidden terminal input and stores it in the
+  selected local profile. Never paste the token into chat, CLI flags, source
+  files, generated connector JSON, or logs; this help output contains no secret value.`);
 }
 
-function printSetup(report, asJson) {
+function printSetup(report, asJson, setup = {}) {
   if (asJson) {
     console.log(JSON.stringify({
       command: 'setup',
       mode: 'preview',
       ...report,
+      profile: setup.profile || null,
+      connection: setup.connection || null,
+      registration: setup.registration || null,
+      connectorConfigPath: setup.connectorConfigPath || null,
       nextSteps: [
-        'Create or select an SLR project agent connection in the SLR web UI.',
-        'Create an Open-Science token credential and bind it to SLR_AGENT_TOKEN.',
-        'Import the secret-free connector configuration and enable the /slr skill.',
+        'Import or start the generated connector and enable the /slr skill.',
+        'Restart the connector after changing profiles or rotating the token.',
+        'Run /slr setup in Open-Science to verify the read-only MCP connection.',
       ],
     }, null, 2));
     return;
@@ -195,15 +237,26 @@ function printSetup(report, asJson) {
   console.log(`Open-Science CLI: ${report.openScienceCli.available ? 'detected' : 'not detected'}`);
   console.log('');
   console.log('Next steps:');
-  console.log('1. Connect the ChatGPT/Open-Science agent to the SLR project in the SLR web UI.');
-  console.log('2. Create an Open-Science token credential and bind it to SLR_AGENT_TOKEN.');
-  console.log('3. Import the secret-free connector configuration and enable the /slr skill.');
+  if (setup.connection?.connected) {
+    console.log(`API test: connected${setup.connection.projectName ? ` to ${setup.connection.projectName}` : ''}; assigned tasks: ${setup.connection.assignedTasks ?? 0}.`);
+  } else if (setup.connection) {
+    console.log(`API test: failed (${setup.connection.code || 'unknown'}). ${setup.connection.message || ''}`);
+  } else {
+    console.log('API test: not run because setup is non-interactive or incomplete.');
+  }
+  console.log(`Connector: ${setup.registration?.registered ? 'registered' : 'manual import required'}.`);
+  if (setup.connectorConfigPath) console.log(`Manual connector config: ${setup.connectorConfigPath}`);
+  console.log('1. Import/start the connector and enable the /slr skill.');
+  console.log('2. Restart the connector after changing profiles or rotating the token.');
+  console.log('3. Run /slr setup in Open-Science to verify the read-only MCP connection.');
   console.log('');
-  console.log('The project token is never requested or printed by this command.');
+  console.log('The project token is never printed by this command.');
 }
 
 function runProfileCommand(args, asJson) {
-  const subcommand = args.find(arg => !arg.startsWith('--') && arg !== 'profile') || 'list';
+  const subcommand = firstCommand(args, 'list') === 'profile'
+    ? (args[args.indexOf('profile') + 1] || 'list')
+    : firstCommand(args, 'list');
   if (subcommand === 'create') {
     const input = profileOptions(args);
     if (!input.name || !input.apiBaseUrl) throw new Error('profile create requires --name and --api-base-url');
@@ -241,7 +294,9 @@ function runProfileCommand(args, asJson) {
 }
 
 function runWorkspaceCommand(args, asJson) {
-  const subcommand = args.find(arg => !arg.startsWith('--') && arg !== 'workspace') || 'init';
+  const subcommand = firstCommand(args, 'init') === 'workspace'
+    ? (args[args.indexOf('workspace') + 1] || 'init')
+    : firstCommand(args, 'init');
   const positionalProfile = args[subcommand === 'workspace' ? -1 : args.indexOf(subcommand) + 1];
   const profile = selectedProfile(args) || (positionalProfile ? getProfile(positionalProfile) : null);
   if (!profile) throw new Error('no active profile; create one first');
@@ -261,7 +316,9 @@ function runWorkspaceCommand(args, asJson) {
 }
 
 function runSkillCommand(args, asJson, packageRoot) {
-  const subcommand = args.find(arg => !arg.startsWith('--') && arg !== 'skill') || 'install';
+  const subcommand = firstCommand(args, 'install') === 'skill'
+    ? (args[args.indexOf('skill') + 1] || 'install')
+    : firstCommand(args, 'install');
   if (subcommand !== 'install') throw new Error('unknown skill command; use install');
   printValue(installSkill(packageRoot, flagValue(args, '--skill-dir')), asJson);
 }
@@ -269,7 +326,7 @@ function runSkillCommand(args, asJson, packageRoot) {
 export async function main(args = process.argv.slice(2), options = {}) {
   rejectCredentialArguments(args);
   const packageRoot = options.packageRoot || resolve(fileURLToPath(new URL('..', import.meta.url)));
-  const command = args.find(arg => !arg.startsWith('--')) || DEFAULT_COMMAND;
+  const command = firstCommand(args);
   const asJson = hasFlag(args, '--json');
   const report = inspectPackage(packageRoot);
 
@@ -280,41 +337,50 @@ export async function main(args = process.argv.slice(2), options = {}) {
 
   if (command === 'setup') {
     const options = profileOptions(args);
-    let profile = options.name ? (() => {
-      try { return getProfile(options.name); } catch (error) {
-        if (!options.apiBaseUrl) throw error;
-        return createProfile(options);
-      }
-    })() : getActiveProfile();
-    if (profile && options.apiBaseUrl && options.name) {
-      profile = updateProfile(options.name, options);
-    }
+    const interactive = !asJson && Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const setup = await prepareProfile({
+      name: options.name,
+      apiBaseUrl: options.apiBaseUrl,
+      interactive,
+    });
+    let profile = setup.profile;
     const skill = installSkill(packageRoot, flagValue(args, '--skill-dir'));
     if (profile && hasFlag(args, '--workspace')) initializeWorkspace(profile);
-    const registration = profile && hasFlag(args, '--register') ? registerConnector(profile, report) : null;
+    const connection = profile ? await testProfileConnection(profile, setup.token) : null;
+    if (profile && connection?.connected && (connection.projectId || connection.projectName)) {
+      profile = updateProfile(profile.name, {
+        projectId: connection.projectId,
+        projectName: connection.projectName,
+      });
+    }
+    const connectorConfigPath = profile ? writeConnectorConfig(profile) : null;
+    const registration = profile && !hasFlag(args, '--no-register')
+      ? registerConnector(profile, report)
+      : null;
     const value = {
       command: 'setup',
-      mode: profile ? 'configured' : 'preview',
+      mode: profile && setup.token ? 'configured' : 'incomplete',
       ...report,
       profile: profile || null,
       connector: profile ? connectorConfig(profile) : null,
+      connection,
       registration,
+      connectorConfigPath,
       skill,
       nextSteps: [
-        'Connect the ChatGPT/Open-Science agent to the SLR project in the SLR web UI.',
-        'Create an Open-Science token credential and bind it to SLR_AGENT_TOKEN.',
-        'Import the secret-free connector configuration and enable the /slr skill.',
+        'Import/start the connector and enable the /slr skill.',
+        'Restart the connector after changing profiles or rotating the token.',
         'Run /slr setup before reviewing a paper.',
       ],
     };
     if (asJson) printValue(value, true);
     else {
-      printSetup(report, false);
+      printSetup(report, false, { profile, connection, registration, connectorConfigPath });
       console.log(`Skill: ${skill.status} at ${skill.path}`);
       if (profile) {
         console.log('');
         console.log(`Profile: ${profile.name}`);
-        console.log('Run `slr config --profile <name>` to print the connector configuration.');
+        console.log(`Run 'slr config --profile ${profile.name}' to print the connector configuration.`);
       }
     }
     return;

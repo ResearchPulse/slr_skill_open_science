@@ -10,7 +10,13 @@ Use the GitHub package reference for setup and connector configuration:
 npx github:ResearchPulse/slr_skill_open_science
 ```
 
-The root package provides the `slr` installer. `setup` reports package readiness and can create/update secret-free profile metadata. It never accepts or prints the project token. Add `--json` for machine-readable output:
+## Fast setup (default)
+
+Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, asks for the API URL and hidden project token, stores the token in the selected local profile, tests the API, and attempts Open-Science connector registration.
+
+The token is stored outside profile metadata under `SLR_CONFIG_DIR` (default `~/.slr`) with restrictive permissions where supported. It is never printed, placed in generated connector JSON, or sent to chat. Use `--json` for a non-interactive report; it never prompts for credentials. If automatic registration is unavailable, import the generated connector configuration manually. After importing and enabling the skill, run `/slr setup` in Open-Science for the read-only check.
+
+The root package provides the `slr` installer. `setup` performs the interactive setup described above: it can create/update a profile, store a token outside profile metadata, test the API, and attempt connector registration. It never prints the project token. Add `--json` for machine-readable, non-interactive output:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science --json
@@ -26,7 +32,7 @@ Use `doctor` to inspect packaged assets and Open-Science CLI availability:
 npx github:ResearchPulse/slr_skill_open_science doctor
 ```
 
-`doctor` prints a JSON report and exits non-zero when a packaged asset is missing. An unavailable `open-science` CLI is reported in the result; it is not itself a package-asset failure. Neither command requests or prints the project token.
+`doctor` prints a JSON report and exits non-zero when a packaged asset is missing. An unavailable `open-science` CLI is reported in the result; it is not itself a package-asset failure. `doctor` and `setup --json` never prompt for credentials or print the project token.
 
 Create a profile and workspace without putting the token in the shell:
 
@@ -47,7 +53,7 @@ npx github:ResearchPulse/slr_skill_open_science config --profile afl-review
 npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review --register
 ```
 
-`--register` uses the local Open-Science CLI when available. Otherwise import the JSON from `config` manually and bind the saved Credential to `SLR_AGENT_TOKEN`.
+`--register` uses the local Open-Science CLI when available. Otherwise import the JSON from `config` manually. The generated connector includes the selected profile; the root launcher reads that profile's protected local token. An Open-Science Credential bound to `SLR_AGENT_TOKEN` may be used as a host-managed override, but it is not required for the local-profile flow.
 
 ## Contents
 
@@ -67,16 +73,16 @@ Configure the released root package as the Open-Science connector command:
 
 ```text
 Command: npx
-Arguments: --yes github:ResearchPulse/slr_skill_open_science --mcp
+Arguments: --yes github:ResearchPulse/slr_skill_open_science --mcp --profile afl-review
 ```
 
 The equivalent shell command is:
 
 ```powershell
-npx github:ResearchPulse/slr_skill_open_science --mcp
+npx github:ResearchPulse/slr_skill_open_science --mcp --profile <profile-name>
 ```
 
-Set `SLR_API_BASE_URL` and bind `SLR_AGENT_TOKEN` to an Open-Science Credential in the connector environment. Optional `SLR_PROFILE_ID`, `SLR_PROJECT_ID`, `SLR_PROJECT_NAME`, and `SLR_API_ALLOWED_HOSTS` provide safe profile context and an explicit host allowlist. The root `--mcp` entrypoint forwards stdio to the MCP server without invoking a shell; stdout is reserved for MCP JSON-RPC and diagnostics use stderr.
+The root `--mcp` entrypoint resolves the selected local profile and reads its protected token. When a profile is selected, its API URL is authoritative; `SLR_AGENT_TOKEN` may be supplied as an explicit host-managed override. Without a profile, direct environment values `SLR_API_BASE_URL` and `SLR_AGENT_TOKEN` are required. Optional `SLR_PROFILE_ID`, `SLR_PROJECT_ID`, `SLR_PROJECT_NAME`, and `SLR_API_ALLOWED_HOSTS` provide context and host validation. The root `--mcp` entrypoint forwards stdio to the MCP server without invoking a shell; stdout is reserved for MCP JSON-RPC and diagnostics use stderr.
 
 ## Local development run
 
@@ -88,7 +94,7 @@ $env:SLR_AGENT_TOKEN = "<project-token>"
 npx slr-agent-mcp
 ```
 
-The local package communicates over stdio. The token is passed only through the protected connector/runtime environment and is sent to the backend only as an `Authorization: Bearer` header. Never place the project token in chat, prompts, the skill, source code, source control, issues, screenshots, or logs. If it is exposed, rotate it in SLR and update the connector environment.
+The direct development package communicates over stdio and receives both values through the runtime environment. The production root connector instead loads the token from the selected local profile. In both flows, the token is sent to the backend only as an `Authorization: Bearer` header. Never place the project token in chat, prompts, the skill, source code, source control, issues, screenshots, or logs. If it is exposed, rotate it in SLR and update the profile or connector credential.
 
 ## Acceptance harness
 

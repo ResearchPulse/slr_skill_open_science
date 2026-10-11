@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -47,18 +47,35 @@ function storePath(configRoot) {
   return join(configRoot, 'profiles.json');
 }
 
-function ensureConfigRoot(configRoot) {
-  mkdirSync(configRoot, { recursive: true, mode: 0o700 });
+function tokenDirectory(configRoot) {
+  return join(configRoot, 'tokens');
 }
 
-function assertNoSecrets(value) {
+function tokenPath(configRoot, name) {
+  return join(tokenDirectory(configRoot), name);
+}
+
+function ensureConfigRoot(configRoot) {
+  mkdirSync(configRoot, { recursive: true, mode: 0o700 });
+  try { chmodSync(configRoot, 0o700); } catch { /* Windows may not support POSIX modes. */ }
+}
+
+function ensureTokenDirectory(configRoot) {
+  const directory = tokenDirectory(configRoot);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try { chmodSync(directory, 0o700); } catch { /* Windows may not support POSIX modes. */ }
+  return directory;
+}
+
+function assertNoSecrets(value, parentKey = '') {
   if (!value || typeof value !== 'object') return;
-  const allowedMetadata = new Set(['tokenSource', 'hasCredentialBinding']);
+  const allowedMetadata = new Set(['tokenSource', 'hasCredentialBinding', 'hasLocalToken']);
   for (const [key, child] of Object.entries(value)) {
-    if (!allowedMetadata.has(key) && /token|secret|password|authorization|api.?key/i.test(key)) {
+    const isProfileName = parentKey === 'profiles';
+    if (!isProfileName && !allowedMetadata.has(key) && /token|secret|password|authorization|api.?key/i.test(key)) {
       throw new Error('profile store contains a forbidden secret field; remove it and rotate the token if necessary');
     }
-    assertNoSecrets(child);
+    assertNoSecrets(child, isProfileName ? 'profile-record' : key);
   }
 }
 
@@ -87,6 +104,7 @@ function writeStore(configRoot, store) {
   const target = storePath(configRoot);
   const temporary = `${target}.${randomUUID()}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(store, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  try { chmodSync(temporary, 0o600); } catch { /* Windows may not support POSIX modes. */ }
   try {
     renameSync(temporary, target);
   } finally {
@@ -108,6 +126,7 @@ function publicProfile(profile) {
     connectorId: profile.connectorId || null,
     connectorName: profile.connectorName || null,
     tokenSource: profile.tokenSource,
+    hasLocalToken: Boolean(profile.hasLocalToken),
     hasCredentialBinding: Boolean(profile.credentialId),
     workspaceRoot: profile.workspaceRoot,
     createdAt: profile.createdAt,
@@ -130,7 +149,8 @@ export function createProfile(input, environment = process.env) {
     credentialId: String(input.credentialId || '').trim() || null,
     connectorId: String(input.connectorId || '').trim() || null,
     connectorName: String(input.connectorName || `slr-${name}`).trim(),
-    tokenSource: 'open-science-credential',
+    tokenSource: input.credentialId ? 'open-science-credential' : 'unconfigured',
+    hasLocalToken: false,
     workspaceId,
     workspaceRoot: profileWorkspace(configRoot, name, workspaceId),
     createdAt: timestamp,
@@ -157,10 +177,52 @@ export function updateProfile(nameInput, changes, environment = process.env) {
   return publicProfile(profile);
 }
 
+export function saveProfileToken(nameInput, tokenInput, environment = process.env) {
+  const configRoot = getConfigRoot(environment);
+  const name = normalizeProfileName(nameInput);
+  const store = readStore(configRoot);
+  const profile = store.profiles[name];
+  if (!profile) throw new Error(`profile not found: ${name}`);
+  const token = String(tokenInput || '').trim();
+  if (!token) throw new Error('agent token must not be empty');
+  const directory = ensureTokenDirectory(configRoot);
+  const target = tokenPath(configRoot, name);
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, `${token}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  try { chmodSync(temporary, 0o600); } catch { /* Windows may not support POSIX modes. */ }
+  try {
+    renameSync(temporary, target);
+    try { chmodSync(target, 0o600); } catch { /* Windows may not support POSIX modes. */ }
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+  profile.tokenSource = 'local-profile-token';
+  profile.hasLocalToken = true;
+  profile.updatedAt = now();
+  writeStore(configRoot, store);
+  return publicProfile(profile);
+}
+
+export function loadProfileToken(nameInput, environment = process.env) {
+  const configRoot = getConfigRoot(environment);
+  const name = normalizeProfileName(nameInput);
+  const store = readStore(configRoot);
+  if (!store.profiles[name]) throw new Error(`profile not found: ${name}`);
+  const path = tokenPath(configRoot, name);
+  if (!existsSync(path)) return null;
+  const token = readFileSync(path, 'utf8').trim();
+  return token || null;
+}
+
+export function profileTokenPath(nameInput, environment = process.env) {
+  return tokenPath(getConfigRoot(environment), normalizeProfileName(nameInput));
+}
+
 export function listProfiles(environment = process.env) {
   const store = readStore(getConfigRoot(environment));
   return Object.values(store.profiles).map(profile => ({
     ...publicProfile(profile),
+    hasLocalToken: existsSync(tokenPath(getConfigRoot(environment), profile.name)),
     active: store.activeProfile === profile.name,
   }));
 }
@@ -171,7 +233,7 @@ export function getProfile(nameInput, environment = process.env) {
   const name = normalizeProfileName(nameInput);
   const profile = store.profiles[name];
   if (!profile) throw new Error(`profile not found: ${name}`);
-  return publicProfile(profile);
+  return { ...publicProfile(profile), hasLocalToken: existsSync(tokenPath(configRoot, profile.name)) };
 }
 
 export function getActiveProfile(environment = process.env) {
@@ -180,7 +242,7 @@ export function getActiveProfile(environment = process.env) {
   if (!store.activeProfile) return null;
   const profile = store.profiles[store.activeProfile];
   if (!profile) throw new Error('active profile is missing from the profile store');
-  return publicProfile(profile);
+  return { ...publicProfile(profile), hasLocalToken: existsSync(tokenPath(configRoot, profile.name)) };
 }
 
 export function useProfile(nameInput, environment = process.env) {
@@ -190,7 +252,7 @@ export function useProfile(nameInput, environment = process.env) {
   if (!store.profiles[name]) throw new Error(`profile not found: ${name}`);
   store.activeProfile = name;
   writeStore(configRoot, store);
-  return publicProfile(store.profiles[name]);
+  return getProfile(name, environment);
 }
 
 export function removeProfile(nameInput, environment = process.env) {
@@ -199,6 +261,8 @@ export function removeProfile(nameInput, environment = process.env) {
   const store = readStore(configRoot);
   if (!store.profiles[name]) throw new Error(`profile not found: ${name}`);
   delete store.profiles[name];
+  const savedToken = tokenPath(configRoot, name);
+  if (existsSync(savedToken)) unlinkSync(savedToken);
   if (store.activeProfile === name) store.activeProfile = Object.keys(store.profiles)[0] || null;
   writeStore(configRoot, store);
   return { removed: name, activeProfile: store.activeProfile };

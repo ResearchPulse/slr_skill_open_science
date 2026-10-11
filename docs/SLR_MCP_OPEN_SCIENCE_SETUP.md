@@ -7,7 +7,7 @@ Tài liệu này hướng dẫn kết nối một project SLR với Open-Science
 1. Mở project SLR và vào **Settings → AI Agents**.
 2. Chọn **ChatGPT — Open-Science**.
 3. Bấm **Connect and generate project token**.
-4. Tạo một Credential dạng token trong Open-Science và bind nó cho `SLR_AGENT_TOKEN` của connector; không dán token vào chat hoặc file cấu hình.
+4. Giữ project token để nhập một lần trong terminal quick setup; không dán token vào chat hoặc file cấu hình. Credential của Open-Science chỉ cần nếu muốn host quản lý token thay cho profile local.
 5. Chọn paper và bấm **Assign to ChatGPT**.
 
 Token này chỉ có scope trên agent/project đó. Không dán token vào chat, skill, source code, issue, screenshot hoặc log. Nếu token đã bị lộ, dùng **Rotate** trong SLR rồi cập nhật connector local.
@@ -20,7 +20,13 @@ Release root package được gọi bằng GitHub reference cố định:
 npx github:ResearchPulse/slr_skill_open_science
 ```
 
-`setup` có thể tạo/kiểm tra profile metadata và in connector config không có secret. Token không bao giờ được nhập qua command argument hay ghi vào profile store. Có thể dùng `--json` để lấy output máy đọc:
+## Quick setup behavior
+
+The no-argument command is the fast path. It detects Node, installs the `/slr` skill, asks for the API URL and project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, and attempts to register the Open-Science connector. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
+
+Use `--json` for a non-interactive report. If automatic registration is unavailable, import the generated connector configuration manually. The connector arguments include `--profile <name>`, so the root `--mcp` launcher can load the matching protected local token. After the connector and skill are available, run `/slr setup` in Open-Science; that chat command performs the read-only check and does not collect credentials.
+
+`setup` có thể tạo/kiểm tra profile metadata, hỏi token bằng terminal input ẩn và test API. Token không ghi vào profile metadata, không in ra output và không đi vào connector JSON. Dùng `--json` để chạy non-interactive; chế độ này không hỏi token:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science --json
@@ -30,7 +36,7 @@ npx github:ResearchPulse/slr_skill_open_science --json
 
 Sau khi bật skill, dùng `/slr setup` như lệnh setup nhanh trong chat. Skill sẽ gọi yêu cầu chỉ đọc `list_assigned_tasks(limit: 1)` để kiểm tra connector. Nếu thành công, skill báo project và trạng thái task; nếu thất bại, skill chỉ hướng dẫn phần connector còn thiếu. Skill không tự thay đổi Settings của Open-Science và không yêu cầu dán token vào chat.
 
-Không gửi `SLR_AGENT_TOKEN` vào chat. Hãy dán token một lần vào **Settings → Connectors → SLR → Environment variables → SLR_AGENT_TOKEN → Access token Credential**. Nếu token đã lỡ xuất hiện trong chat, hãy rotate token trong SLR rồi cập nhật Credential mới.
+Không gửi `SLR_AGENT_TOKEN` vào chat. Với quick setup, token được nhập một lần trong terminal khi chạy `npx` và lưu ở profile local được bảo vệ. Connector có thể dùng Credential host-managed làm override nếu cần; không đặt raw token vào connector JSON. Nếu token đã lỡ xuất hiện trong chat, hãy rotate token trong SLR rồi cập nhật profile/credential mới.
 
 Dùng `doctor` để kiểm tra asset đã được đóng gói và khả năng có `open-science` CLI:
 
@@ -58,15 +64,17 @@ npx github:ResearchPulse/slr_skill_open_science workspace init --profile afl-rev
 npx github:ResearchPulse/slr_skill_open_science config --profile afl-review
 ```
 
-Output `config` không chứa project token; nó gồm command/args, `SLR_API_BASE_URL`, profile/project metadata và credential binding ID. Import JSON này vào Open-Science Connector, bind credential cho `SLR_AGENT_TOKEN`, sau đó enable `/slr` skill.
+Output `config` không chứa project token; nó gồm command/args với `--profile`, `SLR_API_BASE_URL` và profile/project metadata. Import JSON này vào Open-Science Connector, sau đó enable `/slr` skill. Launcher sẽ đọc token từ profile local; Credential cho `SLR_AGENT_TOKEN` chỉ là override tùy chọn.
 
-Nếu `open-science` CLI đã được cài và credential ID đã tồn tại, có thể đăng ký connector tự động:
+Nếu `open-science` CLI đã được cài, có thể đăng ký connector tự động; credential ID chỉ là tùy chọn override:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science setup `
   --profile afl-review `
   --register
 ```
+
+Automatic registration only requires a compatible `open-science` CLI. A Credential ID is optional; it is used only when the host should override the token loaded from the local profile.
 
 Nếu registration không khả dụng, dùng lệnh pinned sau để in JSON và import thủ công:
 
@@ -82,14 +90,16 @@ Khi cấu hình connector cho bản phát hành, dùng root package và flag `--
 
 ```text
 Command: npx
-Arguments: --yes github:ResearchPulse/slr_skill_open_science --mcp
+Arguments: --yes github:ResearchPulse/slr_skill_open_science --mcp --profile <profile-name>
 ```
 
 Lệnh tương đương:
 
 ```powershell
-npx github:ResearchPulse/slr_skill_open_science --mcp
+npx github:ResearchPulse/slr_skill_open_science --mcp --profile <profile-name>
 ```
+
+This uses the selected profile. The bare `--mcp` form is an active-profile fallback only when one is already configured.
 
 Root entrypoint chuyển tiếp stdio tới MCP server đã compile mà không gọi shell. stdout dành cho JSON-RPC; log chẩn đoán đi qua stderr.
 
@@ -110,6 +120,8 @@ $env:SLR_AGENT_TOKEN = "<project-token>"
 npx slr-agent-mcp
 ```
 
+The environment example above is for direct MCP development. The production root connector loads the API URL and token from the selected local profile and does not require `SLR_AGENT_TOKEN` in connector environment.
+
 Chỉ dùng `http://` cho loopback local. Với backend thật, dùng HTTPS.
 
 Trong Open-Science, tạo local MCP connector với command tương đương:
@@ -121,10 +133,10 @@ npx
 Arguments:
 
 ```text
---yes github:ResearchPulse/slr_skill_open_science --mcp
+--yes github:ResearchPulse/slr_skill_open_science --mcp --profile <profile-name>
 ```
 
-Đặt hai environment variables ở phần connector configuration, không đặt trong nội dung hội thoại. MCP giao tiếp qua stdio; stdout dành cho JSON-RPC, log chẩn đoán đi qua stderr.
+Connector production nên truyền `--profile <name>` cùng root package. Launcher sẽ đọc API URL và token từ profile local; environment override vẫn được hỗ trợ nhưng raw token không nằm trong connector JSON hay nội dung hội thoại. MCP giao tiếp qua stdio; stdout dành cho JSON-RPC, log chẩn đoán đi qua stderr.
 
 ## 4. Quyền xác nhận
 

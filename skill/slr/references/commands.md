@@ -34,14 +34,14 @@ When it fails because the connector is missing or disconnected, show the minimum
 ```text
 SLR setup is incomplete
 1. Add/restart the local SLR connector.
-2. Set SLR_API_BASE_URL in the connector environment.
-3. Bind the Open-Science Access token Credential to SLR_AGENT_TOKEN.
+2. Ensure the imported connector contains the selected `--profile <name>` and the profile API URL.
+3. Ensure that profile has a local token, or bind an Open-Science Credential to SLR_AGENT_TOKEN when using host-managed credentials.
 4. Run /slr setup again.
 ```
 
 Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
 
-If the user offers to paste a token into chat, decline that path and direct them to the connector's encrypted Access token Credential for `SLR_AGENT_TOKEN`. If the token was already pasted, do not echo or use it; recommend rotation in the SLR project settings.
+If the user offers to paste a token into chat, decline that path and direct them to the terminal quick setup or the connector's encrypted Access token Credential for `SLR_AGENT_TOKEN`. If the token was already pasted, do not echo or use it; recommend rotation in the SLR project settings.
 
 ## Status response
 

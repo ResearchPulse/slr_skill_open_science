@@ -17,8 +17,9 @@ Validate the complete package as a user would consume it: install with npx, conn
 
 - TypeScript compile, lint/type checks if configured, unit tests, MCP protocol tests, and package dry-run.
 - Test from packed artifact or GitHub checkout, not only the source workspace.
+- Exercise the no-argument Claude-style setup flow and verify that `--mcp` never prompts or contaminates stdout.
 - Verify exact four-tool discovery.
-- Verify setup with native Open-Science connector/credential path and documented fallback path.
+- Verify profile-backed setup with the local token store, native Open-Science connector interoperability, and documented manual-import fallback.
 - Verify profile isolation and profile rotation/disable guidance.
 - Verify no secrets in Git status, package contents, generated config, logs, drafts, or audit.
 - Verify immutable release ref/checksum behavior and run `npm audit --json --package-lock-only` in a network-enabled environment.
@@ -30,6 +31,7 @@ Create or modify:
 
 - `E:/Scientific_Journal_Publication_Trend_Tracking_System/slr_skill_open_science/tests/installer.test.js`
 - `E:/Scientific_Journal_Publication_Trend_Tracking_System/slr_skill_open_science/tests/profile-workspace.test.js`
+- `E:/Scientific_Journal_Publication_Trend_Tracking_System/slr_skill_open_science/tests/setup-flow.test.mjs`
 - `E:/Scientific_Journal_Publication_Trend_Tracking_System/slr_skill_open_science/tests/acceptance/`
 - `E:/Scientific_Journal_Publication_Trend_Tracking_System/slr_skill_open_science/README.md`
 - `E:/Scientific_Journal_Publication_Trend_Tracking_System/slr_skill_open_science/docs/SLR_MCP_OPEN_SCIENCE_SETUP.md`
@@ -38,11 +40,11 @@ Create or modify:
 
 1. Add a deterministic validation script that starts the MCP process and introspects tools.
 2. Run package tests and verify stdio stdout contains protocol frames only.
-3. Pack the package, install it into a temporary directory, and execute the bin entry point.
+3. Pack the package, install it into a temporary directory, and execute the default setup and `--mcp` entry points.
 4. Execute the manual Open-Science acceptance flow with a non-production project token.
 5. Verify the two-step confirmation with accepted, declined, stale-digest, and host-without-elicitation cases.
-6. Review docs, version compatibility, release files, and rollback/update behavior.
-7. Block release if secure credential storage, immutable ref verification, payload-digest confirmation, or response limits are missing.
+6. Review docs, version compatibility, release files, profile migration, and rollback/update behavior.
+7. Block release if local token redaction, profile isolation, immutable ref verification, payload-digest confirmation, or response limits are missing.
 
 ## Todo list
 

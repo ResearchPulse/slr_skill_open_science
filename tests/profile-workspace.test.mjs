@@ -10,7 +10,9 @@ import {
   getActiveProfile,
   getConfigRoot,
   listProfiles,
+  loadProfileToken,
   removeProfile,
+  saveProfileToken,
 } from '../cli/profile-store.js';
 import {
   initializeWorkspace,
@@ -55,6 +57,19 @@ test('profiles keep metadata and workspaces isolated without storing tokens', ()
   const store = readFileSync(join(getConfigRoot(environment), 'profiles.json'), 'utf8');
   assert.equal(store.includes('must-not-be-stored'), false);
   assert.equal(root.includes('project-one'), false);
+}));
+
+test('local profile tokens are isolated from metadata and removed with the profile', () => withStore((environment) => {
+  const profile = createProfile({ name: 'local-token', apiBaseUrl: 'https://slr.example.test/api' }, environment);
+  saveProfileToken(profile.name, 'slrp_local_secret', environment);
+
+  const metadata = readFileSync(join(getConfigRoot(environment), 'profiles.json'), 'utf8');
+  assert.equal(metadata.includes('slrp_local_secret'), false);
+  assert.equal(loadProfileToken(profile.name, environment), 'slrp_local_secret');
+  assert.equal(listProfiles(environment)[0].hasLocalToken, true);
+
+  removeProfile(profile.name, environment);
+  assert.throws(() => loadProfileToken(profile.name, environment), /profile not found/);
 }));
 
 test('workspace writes drafts, receipts, and bounded audit records', () => withStore((environment) => {

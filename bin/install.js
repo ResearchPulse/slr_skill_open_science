@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { getActiveProfile, getProfile, loadProfileToken } from '../cli/profile-store.js';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -13,6 +14,38 @@ function fail(message) {
   process.exitCode = 1;
 }
 
+function flagValue(values, flag) {
+  const index = values.indexOf(flag);
+  return index >= 0 ? values[index + 1] : undefined;
+}
+
+function resolveMcpEnvironment(mcpArgs) {
+  const environment = { ...globalThis.process['env'] };
+  const profileName = flagValue(mcpArgs, '--profile') || environment.SLR_PROFILE_ID?.trim();
+  let profile = null;
+  try {
+    profile = profileName ? getProfile(profileName, environment) : getActiveProfile(environment);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : 'unable to load the selected SLR profile');
+    return null;
+  }
+
+  if (profile) {
+    environment.SLR_API_BASE_URL = profile.apiBaseUrl;
+    environment.SLR_PROFILE_ID = profile.name;
+    if (profile.projectId) environment.SLR_PROJECT_ID = profile.projectId;
+    if (profile.projectName) environment.SLR_PROJECT_NAME = profile.projectName;
+    if (!environment.SLR_AGENT_TOKEN) {
+      environment.SLR_AGENT_TOKEN = loadProfileToken(profile.name, environment) || undefined;
+    }
+  }
+  if (!environment.SLR_API_BASE_URL || !environment.SLR_AGENT_TOKEN) {
+    fail('MCP needs an active profile with a local token, or connector environment values for SLR_API_BASE_URL and SLR_AGENT_TOKEN');
+    return null;
+  }
+  return environment;
+}
+
 function runMcp(mcpArgs) {
   const entrypoint = resolve(packageRoot, 'mcp', 'slr-agent-mcp', 'out', 'index.js');
   if (!existsSync(entrypoint)) {
@@ -20,9 +53,12 @@ function runMcp(mcpArgs) {
     return;
   }
 
+  const environment = resolveMcpEnvironment(mcpArgs);
+  if (!environment) return;
+
   const child = spawn(process.execPath, [entrypoint, ...mcpArgs], {
     cwd: packageRoot,
-    env: process.env,
+    env: environment,
     shell: false,
     stdio: 'inherit',
   });

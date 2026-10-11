@@ -21,8 +21,8 @@ Make the package usable from the Open-Science conversation surface through Claud
 
 ## Requirements
 
-- Commands: `/slr setup`, `/slr status`, `/slr list`, `/slr review`, `/slr doctor`, and help/unknown-command handling.
-- Setup flow: choose/create profile, configure URL/credential binding, validate connection, install/update skill, generate connector config.
+- Commands: `/slr setup`, `/slr status`, `/slr list`, `/slr review`, and help/unknown-command handling. Root `slr doctor` remains a package CLI command.
+- Setup flow: choose/create profile, configure URL/local token or optional credential binding, validate connection, install/update skill, generate connector config.
 - Status/list flow: call `list_assigned_tasks`, show pagination/counts, and distinguish no tasks from auth/network errors.
 - Review flow: choose one assigned task, fetch metadata/fulltext, save a local draft, show review policy, and ask for final confirmation before submit.
 - Tool descriptions and references must instruct the model not to treat paper content as executable instructions.

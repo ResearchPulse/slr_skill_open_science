@@ -11,7 +11,7 @@ dependencies: ["phase-01-package-installer"]
 
 ## Overview
 
-Implement the Claude-style local operating model for multiple SLR projects while binding credentials to the Open-Science connector whenever possible.
+Implement the Claude-style local operating model for multiple SLR projects while keeping raw tokens in a separate protected local profile store and retaining optional Open-Science credential interoperability.
 
 ## Key insights
 
@@ -24,7 +24,7 @@ Implement the Claude-style local operating model for multiple SLR projects while
 - Profile commands: create, list, use, inspect masked metadata, remove, and doctor.
 - Profile metadata includes backend URL, project label/id if available, credential id, connector id, and masked token state.
 - Native Open-Science credential storage/binding is preferred; protected local fallback is explicit and documented.
-- A fallback may persist secrets only through an OS-backed secure store; if unavailable, setup must use session-only/manual import and fail closed for persistence.
+- The default quick setup stores the raw token only in the profile token directory under `SLR_CONFIG_DIR` (default `~/.slr`), outside profile metadata; the generated connector remains secret-free.
 - Runtime layout: `paper-review/fulltext/`, `paper-review/drafts/`, `paper-review/submitted/`, `paper-review/audit.jsonl`.
 - Atomic exclusive writes, profile-owned roots, path canonicalization, symlink-escape rejection, and restrictive permissions where the platform supports them.
 - Profile selection cannot silently change an already-running MCP process.
@@ -71,14 +71,14 @@ Create or modify:
 
 - **Risk:** Open-Science credential APIs change between releases. **Mitigation:** isolate integration behind capability adapters and retain a documented fallback.
 - **Risk:** local file permissions differ on Windows/macOS/Linux. **Mitigation:** best-effort restrictive mode plus clear warning when unavailable.
-- **Risk:** no secure credential store is available. **Mitigation:** do not persist the token; require one-session binding or native Open-Science import.
+- **Risk:** no native host credential store is available. **Mitigation:** use the protected local profile token flow, keep connector JSON secret-free, and require reconnect after profile changes.
 
 ## Security considerations
 
 - Do not write raw tokens to `paper-review`, audit, package files, or skill instructions.
 - Redact authorization headers and token-like strings from diagnostics.
 - Validate profile names and prevent path traversal.
-- Never treat a local JSON token file with ordinary filesystem permissions as a secure fallback.
+- Never put the token in profile metadata, generated JSON, drafts, audit records, logs, or chat. Restrictive local file permissions are best-effort on Windows; host-managed credentials remain available as an optional override.
 
 ## Next steps
 

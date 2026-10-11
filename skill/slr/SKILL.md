@@ -45,14 +45,14 @@ Follow this sequence:
 
 1. Call `list_assigned_tasks` with `limit: 1`. This is the only MCP call made by `/slr setup`; it is a read-only check.
 2. If the read-only call succeeds, report `Setup ready`, the returned project name when available, and whether assigned tasks exist. Then suggest `/slr tasks` or `/slr review next`.
-3. If the connector is unavailable, show only these missing settings: local connector command/arguments, `SLR_API_BASE_URL`, and the credential binding for `SLR_AGENT_TOKEN`. Never ask the user to paste the token into chat.
+3. If the connector is unavailable, show only these missing settings: local connector command/arguments with `--profile <name>`, the profile API URL, and either a local profile token or the optional `SLR_AGENT_TOKEN` credential binding. Never ask the user to paste the token into chat.
 4. After the user reconnects or restarts the connector, rerun the read-only check. Do not claim setup is complete before it succeeds.
 
 The skill cannot install packages or change Open-Science connector settings as part of `/slr setup`; connector management is intentionally outside the four-tool SLR MCP contract.
 
 ## Token input rule
 
-Never ask the user to send `SLR_AGENT_TOKEN` in chat. If a user pastes a token, do not repeat it, store it, include it in a tool call, or place it in a draft/log. Tell the user to remove or rotate the exposed token if it is real, then paste the replacement only into the Open-Science Connector Credential field named `SLR_AGENT_TOKEN`. The API base URL may be entered as plain connector configuration; it is not a token credential.
+Never ask the user to send `SLR_AGENT_TOKEN` in chat. If a user pastes a token, do not repeat it, store it, include it in a tool call, or place it in a draft/log. Direct setup to the terminal quick setup, which accepts hidden input and stores the token in the selected local profile, or to the Open-Science Connector Credential field named `SLR_AGENT_TOKEN` when host-managed credentials are desired. If the token was exposed, recommend rotation. The API base URL may be entered as plain connector configuration; it is not a token credential.
 
 There is no `/slr submit` command. Submission is an internal final step of `/slr review`.
 
