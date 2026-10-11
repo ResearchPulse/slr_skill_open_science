@@ -78,6 +78,8 @@ test('manual connector config is profile-aware and secret-free', () => {
     const config = JSON.parse(readFileSync(path, 'utf8'));
     assert.deepEqual(config.args, ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', 'manual']);
     assert.equal(JSON.stringify(config).includes('slrp_manual_secret'), false);
+    assert.equal('requiredCredentialEnvironment' in config, false);
+    assert.equal('note' in config, false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

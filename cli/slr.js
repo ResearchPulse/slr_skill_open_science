@@ -73,8 +73,6 @@ function connectorConfig(profile) {
       ...(profile.projectName ? { SLR_PROJECT_NAME: profile.projectName } : {}),
     },
     envCredentialIds: profile.credentialId ? { SLR_AGENT_TOKEN: profile.credentialId } : {},
-    requiredCredentialEnvironment: [],
-    note: 'The MCP launcher reads the selected local profile token. An Open-Science credential may be bound to SLR_AGENT_TOKEN as an optional host-managed override; this configuration contains no secret value.',
   };
 }
 
