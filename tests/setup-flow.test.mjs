@@ -148,3 +148,69 @@ test('connector registration updates an existing connector instead of adding a d
     ['connector', 'enable', 'connector-existing'],
   ]);
 });
+
+test('connector registration recognizes an existing SLR connector by command signature', () => {
+  const calls = [];
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr.example.test/api',
+    connectorName: 'slr-default',
+  };
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[1] === 'list') {
+      return {
+        status: 0,
+        error: undefined,
+        stdout: JSON.stringify({ connectors: [{ id: 'legacy-slr', name: 'gpt', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp'] }] }),
+      };
+    }
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run), {
+    registered: true,
+    enabled: true,
+    connector: 'legacy-slr',
+    updated: true,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['connector', 'list', '--json'],
+    ['connector', 'update', 'legacy-slr', '--json'],
+    ['connector', 'enable', 'legacy-slr'],
+  ]);
+});
+
+test('connector registration falls back to updating by stable name when add is rejected', () => {
+  const calls = [];
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr.example.test/api',
+    connectorName: 'slr-default',
+  };
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[1] === 'list') return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [] }) };
+    if (args[1] === 'add') return { status: 1, error: undefined, stdout: '' };
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run), {
+    registered: true,
+    enabled: true,
+    connector: 'slr-default',
+    updated: true,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['connector', 'list', '--json'],
+    ['connector', 'add', '--json'],
+    ['connector', 'update', 'slr-default', '--json'],
+    ['connector', 'enable', 'slr-default'],
+  ]);
+});

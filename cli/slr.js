@@ -98,11 +98,20 @@ function parseJsonOutput(stdout) {
 }
 
 function connectorRecords(value) {
-  if (Array.isArray(value)) return value;
-  for (const candidate of [value?.connectors, value?.items, value?.data?.connectors, value?.data?.items, value?.data]) {
-    if (Array.isArray(candidate)) return candidate;
-  }
-  return [];
+  const records = [];
+  const visit = candidate => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+    if (!candidate || typeof candidate !== 'object') return;
+    if (connectorIdFromRecord(candidate) && (
+      candidate.name || candidate.connectorName || candidate.displayName || candidate.connector?.name
+    )) records.push(candidate);
+    Object.values(candidate).forEach(visit);
+  };
+  visit(value);
+  return records;
 }
 
 function connectorIdFromRecord(record) {
@@ -113,7 +122,10 @@ function existingConnectorId(stdout, connector) {
   const records = connectorRecords(parseJsonOutput(stdout));
   const match = records.find(record => {
     const names = [record?.id, record?.name, record?.connectorName, record?.displayName, record?.connector?.name];
-    return names.includes(connector.name) || names.includes(connector.displayName);
+    if (names.includes(connector.name) || names.includes(connector.displayName)) return true;
+    const serialized = JSON.stringify(record);
+    return record?.command === connector.command
+      && serialized.includes('slr_skill_open_science');
   });
   return match ? connectorIdFromRecord(match) : null;
 }
@@ -152,16 +164,29 @@ export function registerConnector(profile, report, run = openScienceCommand) {
   const existingId = listed.error || listed.status !== 0
     ? null
     : existingConnectorId(listed.stdout, connector);
-  const operation = existingId ? 'update' : 'add';
-  const result = run(
+  let operation = existingId ? 'update' : 'add';
+  let connectorId = existingId;
+  let result = run(
     executable,
     existingId ? ['connector', 'update', existingId, '--json'] : ['connector', 'add', '--json'],
     `${JSON.stringify(connector)}\n`,
   );
-  if (result.error || result.status !== 0) {
-    return { registered: false, reason: `open-science-connector-${operation}-failed` };
+  if ((result.error || result.status !== 0) && !existingId) {
+    const fallback = run(executable, ['connector', 'update', connector.name, '--json'], `${JSON.stringify(connector)}\n`);
+    if (!fallback.error && fallback.status === 0) {
+      operation = 'update';
+      connectorId = connector.name;
+      result = fallback;
+    }
   }
-  const connectorId = existingId || connectorIdFromAddOutput(result.stdout, connector.name);
+  if (result.error || result.status !== 0) {
+    return {
+      registered: false,
+      reason: `open-science-connector-${operation}-failed`,
+      exitCode: result.status ?? null,
+    };
+  }
+  connectorId ||= connectorIdFromAddOutput(result.stdout, connector.name);
   const enabled = run(executable, ['connector', 'enable', connectorId]);
   if (enabled.error || enabled.status !== 0) {
     return {
@@ -171,7 +196,7 @@ export function registerConnector(profile, report, run = openScienceCommand) {
       reason: 'open-science-connector-enable-failed',
     };
   }
-  return { registered: true, enabled: true, connector: connectorId, updated: Boolean(existingId) };
+  return { registered: true, enabled: true, connector: connectorId, updated: operation === 'update' };
 }
 
 function profileOptions(args) {
@@ -305,7 +330,7 @@ function printSetup(report, asJson, setup = {}) {
   } else if (setup.registration?.registered) {
     console.log(`Connector: registered but not enabled (${setup.registration.reason || 'unknown error'})`);
   } else {
-    console.log('Connector: not registered automatically');
+    console.log(`Connector: not registered automatically${setup.registration?.reason ? ` (${setup.registration.reason})` : ''}`);
   }
   if (setup.skill?.status) console.log(`Skill: ${setup.skill.status}`);
   if ((!setup.registration?.registered || !setup.registration.enabled) && setup.connectorConfigPath) {
