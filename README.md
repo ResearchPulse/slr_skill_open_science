@@ -12,7 +12,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Fast setup (default)
 
-Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, asks for the API URL and hidden project token, stores the token in the selected local profile, tests the API, and attempts Open-Science connector registration.
+Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores the token in the selected local profile, tests the API, and attempts Open-Science connector registration. Use `--api-base-url` only when targeting another server.
 
 The token is stored outside profile metadata under `SLR_CONFIG_DIR` (default `~/.slr`) with restrictive permissions where supported. It is never printed, placed in generated connector JSON, or sent to chat. Use `--json` for a non-interactive report; it never prompts for credentials. If automatic registration is unavailable, import the generated connector configuration manually. After importing and enabling the skill, run `/slr setup` in Open-Science for the read-only check.
 

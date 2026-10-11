@@ -12,8 +12,8 @@ The Open-Science package currently exposes the correct four-tool Node/TypeScript
 MCP server, but its setup flow is host-first: the user must create an
 Open-Science Credential and bind it to the connector before the package can
 test the API. The Claude Science package provides a simpler onboarding flow:
-one `npx` command detects the runtime, copies the skill, asks for the API URL
-and hidden token, saves a project profile, tests the API, and registers the
+one `npx` command detects the runtime, copies the skill, uses the production API
+URL by default, asks for the hidden token, saves a project profile, tests the API, and registers the
 MCP server.
 
 The desired user experience is the Claude flow while preserving the existing
@@ -37,7 +37,7 @@ With no subcommand, it runs interactive setup. The setup sequence is:
 
 1. Verify the supported Node runtime and locate the package assets.
 2. Copy or update the managed `/slr` skill.
-3. Ask for the API base URL and project token; the token input is hidden.
+3. Use the production API base URL by default and ask only for the project token; the token input is hidden. A custom URL remains available through `--api-base-url`.
 4. Save the URL, selected profile, and token in the local profile store.
 5. Run a read-only API connection test using `list_assigned_tasks`.
 6. Generate and, when the Open-Science CLI is available, register a local MCP connector.

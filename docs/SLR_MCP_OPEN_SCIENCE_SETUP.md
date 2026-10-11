@@ -22,7 +22,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Quick setup behavior
 
-The no-argument command is the fast path. It detects Node, installs the `/slr` skill, asks for the API URL and project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, and attempts to register the Open-Science connector. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
+The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, asks only for the project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, and attempts to register the Open-Science connector. Use `--api-base-url` only when targeting another server. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
 
 Use `--json` for a non-interactive report. If automatic registration is unavailable, import the generated connector configuration manually. The connector arguments include `--profile <name>`, so the root `--mcp` launcher can load the matching protected local token. After the connector and skill are available, run `/slr setup` in Open-Science; that chat command performs the read-only check and does not collect credentials.
 

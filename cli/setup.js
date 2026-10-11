@@ -9,6 +9,7 @@ import {
 } from './profile-store.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_API_BASE_URL = 'https://slr-api.hyperdatalab.org/api';
 
 function hasInteractiveTerminal() {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -87,11 +88,7 @@ function existingProfile(name, environment) {
 export async function prepareProfile({ name, apiBaseUrl, interactive = hasInteractiveTerminal(), environment = globalThis.process['env'] } = {}) {
   const profileName = name || getActiveProfile(environment)?.name || 'default';
   let profile = existingProfile(profileName, environment);
-  let url = apiBaseUrl || profile?.apiBaseUrl;
-
-  if (interactive) {
-    url = await promptText('API base URL', url || 'https://slr-api.hyperdatalab.org/api');
-  }
+  const url = apiBaseUrl || profile?.apiBaseUrl || DEFAULT_API_BASE_URL;
   if (!url) return { profile: null, token: null, skipped: true, reason: 'API URL was not provided' };
 
   profile = profile
