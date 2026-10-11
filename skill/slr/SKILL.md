@@ -37,6 +37,19 @@ Route these commands as follows:
 - `/slr review next` — choose the first task whose status is `ASSIGNED`; process one task only.
 - `/slr help` — always show the command menu below, followed by the confirmation rule.
 
+## Suggested next actions
+
+After every successful command, finish with a short `Suggested next actions` block. Keep it actionable and do not present actions that the current task state cannot support.
+
+- `/slr setup` or `/slr status`: if assigned tasks exist, suggest `/slr tasks` and `/slr review next`; otherwise suggest assigning a paper in the SLR web application and then running `/slr tasks`.
+- `/slr tasks`: suggest `/slr task <taskId>` for a selected task. Do not imply that the paper can be reviewed until its full-text status is known.
+- `/slr task <taskId>`: if full text is available, suggest `/slr review <taskId>`; if it is unavailable, tell the user to upload the PDF in the SLR web application before reviewing; if it is processing, suggest retrying after the returned delay.
+- `/slr fulltext <taskId>`: if Markdown is available, suggest `/slr review <taskId>`; for pending or unavailable text, suggest only the wait/upload action.
+- `/slr review <taskId>`: after saving the exact draft, show `confirm` and `cancel` as the only next actions. Never suggest or call a submit path before confirmation.
+- After `cancel`, report that nothing was submitted and suggest `/slr task <taskId>` or `/slr tasks` if the user wants to choose another paper.
+
+These are text suggestions for hosts that do not expose command buttons. They do not add tools, change task state, or replace the confirmation handshake.
+
 ## Quick setup flow
 
 `/slr setup` is a fast onboarding command, not a second project-management UI. The SLR web application remains responsible for creating the project, connecting the agent, generating/rotating the project token, and assigning papers.
@@ -44,9 +57,11 @@ Route these commands as follows:
 Follow this sequence:
 
 1. Call `list_assigned_tasks` with `limit: 1`. This is the only MCP call made by `/slr setup`; it is a read-only check.
-2. If the read-only call succeeds, report `Setup ready`, the returned project name when available, and whether assigned tasks exist. Then suggest `/slr tasks` or `/slr review next`.
+2. If the read-only call succeeds, report `Setup ready`, the returned project name when available, and whether assigned tasks exist. If tasks exist, suggest `/slr tasks` or `/slr review next`; otherwise suggest assigning a paper in the SLR web application first.
 3. If the connector is unavailable, show only these missing settings: local connector command/arguments with `--profile <name>`, the profile API URL, and either a local profile token or the optional `SLR_AGENT_TOKEN` credential binding. Never ask the user to paste the token into chat.
 4. After the user reconnects or restarts the connector, rerun the read-only check. Do not claim setup is complete before it succeeds.
+
+When setup succeeds with no assigned tasks, do not suggest review commands; suggest assigning a paper in the SLR web application first.
 
 The skill cannot install packages or change Open-Science connector settings as part of `/slr setup`; connector management is intentionally outside the four-tool SLR MCP contract.
 
@@ -70,6 +85,8 @@ Follow these states in order:
 8. `USER_CONFIRMATION`: show the exact decision, reasoning, and data that will be sent. Ask for an explicit `confirm` or `cancel`.
 9. `SUBMIT`: call `submit_review_result` only after an affirmative user response. The first call must return `CONFIRMATION_REQUIRED` without writing. Show its digest and ask for the final confirmation; only then call the same tool a second time with the exact same payload plus `confirmation: { confirm: true, digest }`. No backend POST occurs before that second call.
 10. `RECEIPT`: after a successful response, save a redacted receipt under `paper-review/submitted/<taskId>.json` and report the accepted result. Do not automatically select another paper.
+
+If `get_task_fulltext` reports that Markdown is unavailable, stop before `REVIEW_DRAFT`, explain that the PDF must be uploaded in the SLR web application, and do not recommend a review based on an invented or incomplete full text.
 
 If the user changes the task, changes the draft, answers ambiguously, or says no, return to `REVIEW_DRAFT` or stop without calling the write tool.
 

@@ -16,6 +16,29 @@ SLR review menu
 Use numbered choices as a fallback when the host does not provide command buttons.
 `/slr help` must render this menu even when the host does not provide command buttons.
 
+## Suggested next actions
+
+Append one concise block to command responses. These are guidance only; they do not call tools automatically.
+
+```text
+Suggested next actions:
+- /slr tasks — list assigned papers
+- /slr review next — review the first ASSIGNED paper
+```
+
+Use these state-specific variants:
+
+| Current result | Suggested action |
+|---|---|
+| Setup/status succeeds with assigned tasks | `/slr tasks` or `/slr review next` |
+| Setup/status succeeds with no assigned tasks | Assign a paper in the SLR web app, then `/slr tasks` |
+| Task details have full text available | `/slr review <taskId>` |
+| Full text is processing | Retry after `retryAfterSeconds`; do not review yet |
+| Full text is unavailable | Upload the paper PDF in the SLR web app, then retry `/slr task <taskId>` |
+| Exact review draft is displayed | Reply `confirm` or `cancel` |
+
+Do not suggest `/slr review` for unavailable or pending full text. Do not suggest a submit command; submission is only the final confirmation-gated step inside `/slr review`.
+
 ## Quick setup response
 
 `/slr setup` must first perform exactly one read-only connection check using `list_assigned_tasks` with `limit: 1`. It does not install a package, change connector settings, or call a write tool.
@@ -27,6 +50,12 @@ SLR setup ready
 Project: <project name when available>
 Assigned tasks: <count or none>
 Next: /slr tasks or /slr review next
+```
+
+If `Assigned tasks` is `none`, replace the next line with:
+
+```text
+Next: Assign a paper in the SLR web application, then run /slr tasks
 ```
 
 When it fails because the connector is missing or disconnected, show the minimum setup checklist:
@@ -60,6 +89,8 @@ Call `list_assigned_tasks` with the requested limit, defaulting to 25. Show task
 
 Filter review selection to `status: ASSIGNED`. A completed task is informational only.
 
+End the response with `/slr task <taskId>` for the task the user wants to inspect. If the list includes full-text status, keep the recommendation conditional: unavailable text requires a PDF upload, while available text can proceed to `/slr task` and then `/slr review`.
+
 ## Full-text response
 
 When `get_task_fulltext` returns Markdown, summarize or quote only what is needed for the review. When it returns pending state, show:
@@ -67,6 +98,18 @@ When `get_task_fulltext` returns Markdown, summarize or quote only what is neede
 ```text
 Full text is still processing. Retry after <retryAfterSeconds> seconds.
 No submission was made.
+
+Suggested next actions:
+- Retry /slr fulltext <taskId> after the delay.
+- Or retry /slr task <taskId> after the delay.
 ```
 
-For `404`, explain that the task or assigned paper is unavailable. For `409`, explain that Markdown is unavailable. Do not expose backend URLs or credentials.
+For `404`, explain that the task or assigned paper is unavailable and suggest refreshing `/slr tasks`; do not suggest uploading a PDF for a missing task. For `409`, explain that Markdown is unavailable and suggest uploading the PDF in the SLR web application. Do not expose backend URLs or credentials.
+
+For a `409` full-text-unavailable result, end with:
+
+```text
+Suggested next actions:
+- Upload the paper PDF in the SLR web application.
+- Retry /slr task <taskId> after the upload is complete.
+```

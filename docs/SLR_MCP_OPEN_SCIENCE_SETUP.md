@@ -169,6 +169,8 @@ Nếu người dùng không xác nhận lượt thứ hai, dừng ở draft; kh�
 
 Không có `/slr submit`; submit chỉ là bước cuối bên trong `/slr review` sau xác nhận rõ ràng.
 
+Skill hiển thị `Suggested next actions` sau các lệnh. Gợi ý sẽ phù hợp với trạng thái task: có task thì gợi ý xem task/review, không có task thì gợi ý assign paper, full text đang xử lý thì chờ retry, còn full text không có thì upload PDF trên web app. Khi draft đã hiển thị, chỉ còn `confirm` hoặc `cancel`.
+
 ## 6. Xử lý lỗi
 
 - `401`: token thiếu, sai, đã rotate hoặc bị disable. Không gửi token vào chat.
