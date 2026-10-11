@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { createProfile, saveProfileToken } from '../cli/profile-store.js';
 import { prepareProfile, testProfileConnection } from '../cli/setup.js';
-import { writeConnectorConfig } from '../cli/slr.js';
+import { registerConnector, writeConnectorConfig } from '../cli/slr.js';
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -85,4 +85,33 @@ test('manual connector config is profile-aware and secret-free', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('connector registration enables the connector after adding it', () => {
+  const calls = [];
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr.example.test/api',
+    connectorName: 'slr-default',
+  };
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    return args[1] === 'add'
+      ? { status: 0, error: undefined, stdout: JSON.stringify({ id: 'connector-123' }) }
+      : { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run), {
+    registered: true,
+    enabled: true,
+    connector: 'connector-123',
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['connector', 'add', '--json'],
+    ['connector', 'enable', 'connector-123'],
+  ]);
+  assert.match(calls[0].input, /"name":"slr-default"/);
 });

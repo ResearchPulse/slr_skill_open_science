@@ -12,11 +12,11 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Fast setup (default)
 
-Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores the token in the selected local profile, tests the API, and attempts Open-Science connector registration. Use `--api-base-url` only when targeting another server.
+Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores the token in the selected local profile, tests the API, registers and enables the Open-Science connector. Use `--api-base-url` only when targeting another server.
 
-The token is stored outside profile metadata under `SLR_CONFIG_DIR` (default `~/.slr`) with restrictive permissions where supported. It is never printed, placed in generated connector JSON, or sent to chat. Use `--json` for a non-interactive report; it never prompts for credentials. If automatic registration is unavailable, import the generated connector configuration manually. After importing and enabling the skill, run `/slr setup` in Open-Science for the read-only check.
+The token is stored outside profile metadata under `SLR_CONFIG_DIR` (default `~/.slr`) with restrictive permissions where supported. It is never printed, placed in generated connector JSON, or sent to chat. Use `--json` for a non-interactive report; it never prompts for credentials. If automatic registration is unavailable, import the generated connector configuration manually. After setup, open a new Open-Science conversation and run `/slr setup` for the read-only check.
 
-The root package provides the `slr` installer. `setup` performs the interactive setup described above: it can create/update a profile, store a token outside profile metadata, test the API, and attempt connector registration. It never prints the project token. Add `--json` for machine-readable, non-interactive output:
+The root package provides the `slr` installer. `setup` performs the interactive setup described above: it can create/update a profile, store a token outside profile metadata, test the API, register and enable the connector. It never prints the project token. Add `--json` for machine-readable, non-interactive output:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science --json
@@ -53,7 +53,7 @@ npx github:ResearchPulse/slr_skill_open_science config --profile afl-review
 npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review --register
 ```
 
-`--register` uses the local Open-Science CLI when available. Otherwise import the JSON from `config` manually. The generated connector includes the selected profile; the root launcher reads that profile's protected local token. An Open-Science Credential bound to `SLR_AGENT_TOKEN` may be used as a host-managed override, but it is not required for the local-profile flow.
+`--register` uses the local Open-Science CLI when available, then enables the registered connector. Otherwise import the JSON from `config` manually. The generated connector includes the selected profile; the root launcher reads that profile's protected local token. An Open-Science Credential bound to `SLR_AGENT_TOKEN` may be used as a host-managed override, but it is not required for the local-profile flow.
 
 ## Contents
 

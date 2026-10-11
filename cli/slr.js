@@ -70,6 +70,26 @@ function connectorConfig(profile) {
   };
 }
 
+function openScienceCommand(executable, args, input = undefined) {
+  return spawnSync(executable, args, {
+    input,
+    encoding: 'utf8',
+    shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable),
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 15_000,
+    windowsHide: true,
+  });
+}
+
+function connectorIdFromAddOutput(stdout, fallback) {
+  try {
+    const value = JSON.parse(stdout || '{}');
+    return value.id || value.connectorId || value.connector?.id || value.data?.id || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function writeConnectorConfig(profile, environment = process.env) {
   const directory = join(configRootFor(environment), 'connectors');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -89,22 +109,30 @@ export function writeConnectorConfig(profile, environment = process.env) {
   return target;
 }
 
-function registerConnector(profile, report) {
+export function registerConnector(profile, report, run = openScienceCommand) {
   if (!report.openScienceCli.available || !report.openScienceCli.executable) {
     return { registered: false, reason: 'open-science-cli-not-detected' };
   }
-  const result = spawnSync(report.openScienceCli.executable, ['connector', 'add', '--json'], {
-    input: `${JSON.stringify(connectorConfig(profile))}\n`,
-    encoding: 'utf8',
-    shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(report.openScienceCli.executable),
-    stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: 15_000,
-    windowsHide: true,
-  });
+  const connector = connectorConfig(profile);
+  const result = run(
+    report.openScienceCli.executable,
+    ['connector', 'add', '--json'],
+    `${JSON.stringify(connector)}\n`,
+  );
   if (result.error || result.status !== 0) {
     return { registered: false, reason: 'open-science-connector-registration-failed' };
   }
-  return { registered: true, connector: profile.connectorName || `slr-${profile.name}` };
+  const connectorId = connectorIdFromAddOutput(result.stdout, connector.name);
+  const enabled = run(report.openScienceCli.executable, ['connector', 'enable', connectorId]);
+  if (enabled.error || enabled.status !== 0) {
+    return {
+      registered: true,
+      enabled: false,
+      connector: connectorId,
+      reason: 'open-science-connector-enable-failed',
+    };
+  }
+  return { registered: true, enabled: true, connector: connectorId };
 }
 
 function profileOptions(args) {
@@ -216,9 +244,9 @@ function printSetup(report, asJson, setup = {}) {
       registration: setup.registration || null,
       connectorConfigPath: setup.connectorConfigPath || null,
       nextSteps: [
-        'Import or start the generated connector and enable the /slr skill.',
-        'Restart the connector after changing profiles or rotating the token.',
-        'Run /slr setup in Open-Science to verify the read-only MCP connection.',
+        'Open a new Open-Science conversation so the updated /slr skill is loaded.',
+        'Run /slr setup to verify the read-only MCP connection.',
+        'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.',
       ],
     }, null, 2));
     return;
@@ -236,11 +264,17 @@ function printSetup(report, asJson, setup = {}) {
   } else {
     console.log('API test: not run because setup is non-interactive or incomplete.');
   }
-  console.log(`Connector: ${setup.registration?.registered ? 'registered' : 'manual import required'}.`);
+  if (setup.registration?.registered && setup.registration.enabled) {
+    console.log(`Connector: registered and enabled (${setup.registration.connector}).`);
+  } else if (setup.registration?.registered) {
+    console.log(`Connector: registered but could not be enabled (${setup.registration.reason || 'unknown error'}).`);
+  } else {
+    console.log('Connector: manual import required.');
+  }
   if (setup.connectorConfigPath) console.log(`Manual connector config: ${setup.connectorConfigPath}`);
-  console.log('1. Import/start the connector and enable the /slr skill.');
-  console.log('2. Restart the connector after changing profiles or rotating the token.');
-  console.log('3. Run /slr setup in Open-Science to verify the read-only MCP connection.');
+  console.log('1. Open a new Open-Science conversation so the updated /slr skill is loaded.');
+  console.log('2. Run /slr setup in Open-Science to verify the read-only MCP connection.');
+  console.log('3. Assign a paper in the SLR web application, then run /slr tasks or /slr review next.');
   console.log('');
   console.log('The project token is never printed by this command.');
 }
@@ -360,9 +394,9 @@ export async function main(args = process.argv.slice(2), options = {}) {
       connectorConfigPath,
       skill,
       nextSteps: [
-        'Import/start the connector and enable the /slr skill.',
-        'Restart the connector after changing profiles or rotating the token.',
+        'Open a new Open-Science conversation so the updated /slr skill is loaded.',
         'Run /slr setup before reviewing a paper.',
+        'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.',
       ],
     };
     if (asJson) printValue(value, true);
