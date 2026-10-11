@@ -66,13 +66,7 @@ function connectorConfig(profile) {
     transport: 'stdio',
     command: 'npx',
     args: ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', profile.name],
-    env: {
-      SLR_API_BASE_URL: profile.apiBaseUrl,
-      SLR_PROFILE_ID: profile.name,
-      ...(profile.projectId ? { SLR_PROJECT_ID: profile.projectId } : {}),
-      ...(profile.projectName ? { SLR_PROJECT_NAME: profile.projectName } : {}),
-    },
-    envCredentialIds: profile.credentialId ? { SLR_AGENT_TOKEN: profile.credentialId } : {},
+    ...(profile.credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: profile.credentialId } } : {}),
   };
 }
 
