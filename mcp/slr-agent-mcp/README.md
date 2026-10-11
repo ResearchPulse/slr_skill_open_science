@@ -42,7 +42,7 @@ The process communicates over stdio. Protocol messages use stdout; diagnostics u
 - `get_task_fulltext`
 - `submit_review_result`
 
-The last tool is a write operation. The first call returns a digest and sends no backend request. After the user confirms that exact digest, the client must repeat the call with `confirmation: { confirm: true, digest }`; only then does the server send the backend POST. The Open-Science skill must also show the draft and ask the user before the first call.
+The last tool is a write operation. The Open-Science skill shows the exact draft and asks the user for one `confirm` or `cancel`, then makes the first safe call. That call returns a digest and sends no backend request; the skill automatically repeats it with `confirmation: { confirm: true, digest }`, without a second prompt. Only then does the server send the backend POST. The digest handshake remains enforced even when the host does not support MCP elicitation.
 
 ## Development
 

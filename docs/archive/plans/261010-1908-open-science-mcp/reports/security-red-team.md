@@ -3,7 +3,7 @@
 ## Scope
 
 - `docs/open-science-architecture.md`
-- `plans/261010-1908-open-science-mcp/plan.md` and all six phase files
+- `docs/archive/plans/261010-1908-open-science-mcp/plan.md` and all six phase files
 - Current TypeScript MCP prototype under `mcp/slr-agent-mcp/src/`
 - Current package metadata and lockfile
 

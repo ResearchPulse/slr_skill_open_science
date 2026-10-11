@@ -35,9 +35,28 @@ Use these state-specific variants:
 | Task details have full text available | `/slr review <taskId>` |
 | Full text is processing | Retry after `retryAfterSeconds`; do not review yet |
 | Full text is unavailable | Upload the paper PDF in the SLR web app, then retry `/slr task <taskId>` |
-| Exact review draft is displayed | Reply `confirm` or `cancel` |
+| Exact review draft is displayed | Reply `confirm` once or `cancel`; the digest call is handled automatically |
 
 Do not suggest `/slr review` for unavailable or pending full text. Do not suggest a submit command; submission is only the final confirmation-gated step inside `/slr review`.
+
+## Review confirmation response
+
+The skill shows the exact payload before the first submission call. The user sees one confirmation prompt:
+
+```text
+Reply `confirm` once to record this result, or `cancel` to stop.
+The connector digest step will be handled automatically.
+```
+
+After `confirm`, call `submit_review_result` with the unchanged payload. If it returns `CONFIRMATION_REQUIRED`, immediately call it again with the returned digest. Never ask the user to confirm the digest separately.
+
+After a successful submission:
+
+```text
+Suggested next actions:
+- /slr tasks — choose the next assigned paper
+- /slr status — refresh project state
+```
 
 ## Quick setup response
 
@@ -89,7 +108,30 @@ Call `list_assigned_tasks` with the requested limit, defaulting to 25. Show task
 
 Filter review selection to `status: ASSIGNED`. A completed task is informational only.
 
-End the response with `/slr task <taskId>` for the task the user wants to inspect. If the list includes full-text status, keep the recommendation conditional: unavailable text requires a PDF upload, while available text can proceed to `/slr task` and then `/slr review`.
+End the response with a visible block like this, using only the applicable branch:
+
+```text
+Suggested next actions:
+- /slr task <taskId> — inspect the selected paper
+- If full text is available: /slr review <taskId>
+- If full text is processing: retry after the returned delay
+- If full text is unavailable: upload the PDF in the SLR web application
+```
+
+Do not suggest `/slr review` for unavailable or pending full text.
+
+## Task detail response
+
+After `/slr task <taskId>`, always show a visible `Suggested next actions` block:
+
+```text
+Suggested next actions:
+- Full text available: /slr review <taskId>
+- Full text processing: retry after <retryAfterSeconds> seconds
+- Full text unavailable: upload the paper PDF, then retry /slr task <taskId>
+```
+
+Render only the branch that matches the returned full-text status.
 
 ## Full-text response
 

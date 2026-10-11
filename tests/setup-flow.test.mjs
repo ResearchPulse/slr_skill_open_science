@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { createProfile, saveProfileToken } from '../cli/profile-store.js';
 import { prepareProfile, testProfileConnection } from '../cli/setup.js';
-import { registerConnector, writeConnectorConfig } from '../cli/slr.js';
+import { ensureOpenScienceDaemon, registerConnector, writeConnectorConfig } from '../cli/slr.js';
+
+const daemonAlreadyReady = () => ({ ready: true, started: false });
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -104,7 +106,7 @@ test('connector registration enables the connector after adding it', () => {
       : { status: 0, error: undefined, stdout: '' };
   };
 
-  assert.deepEqual(registerConnector(profile, report, run), {
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
     registered: true,
     enabled: true,
     connector: 'connector-123',
@@ -136,7 +138,7 @@ test('connector registration updates an existing connector instead of adding a d
     return { status: 0, error: undefined, stdout: '' };
   };
 
-  assert.deepEqual(registerConnector(profile, report, run), {
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
     registered: true,
     enabled: true,
     connector: 'connector-existing',
@@ -171,7 +173,7 @@ test('connector registration recognizes an existing SLR connector by command sig
     return { status: 0, error: undefined, stdout: '' };
   };
 
-  assert.deepEqual(registerConnector(profile, report, run), {
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
     registered: true,
     enabled: true,
     connector: 'legacy-slr',
@@ -201,7 +203,7 @@ test('connector registration falls back to updating by stable name when add is r
     return { status: 0, error: undefined, stdout: '' };
   };
 
-  assert.deepEqual(registerConnector(profile, report, run), {
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
     registered: true,
     enabled: true,
     connector: 'slr-default',
@@ -237,7 +239,7 @@ test('connector registration recognizes nested connector configuration output', 
     return { status: 0, error: undefined, stdout: '' };
   };
 
-  assert.deepEqual(registerConnector(profile, report, run), {
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
     registered: true,
     enabled: true,
     connector: 'nested-slr',
@@ -264,9 +266,78 @@ test('connector registration preserves a structured Open-Science error code', ()
     return { status: 1, error: undefined, stdout: '', stderr: JSON.stringify({ error: { code: 'invalid_configuration' } }) };
   };
 
-  assert.deepEqual(registerConnector(profile, report, run), {
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
     registered: false,
     reason: 'open-science-connector-add-failed:invalid_configuration',
     exitCode: 1,
   });
+});
+
+test('daemon readiness reuses an already running Open-Science daemon', () => {
+  const calls = [];
+  const run = (executable, args) => {
+    calls.push({ executable, args });
+    return { status: 0, error: undefined, stdout: JSON.stringify({ running: true }) };
+  };
+
+  assert.deepEqual(ensureOpenScienceDaemon('open-science', run, { pollAttempts: 1, pollDelayMs: 0 }), {
+    ready: true,
+    started: false,
+  });
+  assert.deepEqual(calls.map(call => call.args), [['status', '--json']]);
+});
+
+test('daemon readiness starts a stopped daemon and waits for running state', () => {
+  const calls = [];
+  let statusCalls = 0;
+  const run = (executable, args) => {
+    calls.push({ executable, args });
+    if (args[0] === 'status') {
+      statusCalls += 1;
+      return { status: 0, error: undefined, stdout: JSON.stringify({ running: statusCalls > 1 }) };
+    }
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(ensureOpenScienceDaemon('open-science', run, { pollAttempts: 2, pollDelayMs: 0 }), {
+    ready: true,
+    started: true,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['status', '--json'],
+    ['start', '--no-open'],
+    ['status', '--json'],
+  ]);
+});
+
+test('daemon readiness returns a bounded failure when start fails', () => {
+  const calls = [];
+  const run = (executable, args) => {
+    calls.push({ executable, args });
+    if (args[0] === 'status') return { status: 0, error: undefined, stdout: JSON.stringify({ running: false }) };
+    return { status: 1, error: undefined, stdout: '', stderr: 'daemon unavailable' };
+  };
+
+  assert.deepEqual(ensureOpenScienceDaemon('open-science', run, { pollAttempts: 2, pollDelayMs: 0 }), {
+    ready: false,
+    started: false,
+    reason: 'open-science-daemon-start-failed',
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['status', '--json'],
+    ['start', '--no-open'],
+  ]);
+});
+
+test('missing Open-Science CLI keeps connector registration as a manual fallback', () => {
+  let readinessChecked = false;
+  const result = registerConnector(
+    { name: 'default', apiBaseUrl: 'https://slr.example.test/api', connectorName: 'slr-default' },
+    { openScienceCli: { available: false } },
+    () => ({ status: 0, error: undefined, stdout: '' }),
+    () => { readinessChecked = true; return { ready: true }; },
+  );
+
+  assert.deepEqual(result, { registered: false, reason: 'open-science-cli-not-detected' });
+  assert.equal(readinessChecked, false);
 });

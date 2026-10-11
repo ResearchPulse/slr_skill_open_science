@@ -109,12 +109,14 @@ The public MCP surface remains exactly:
 3. `get_task_fulltext`
 4. `submit_review_result`
 
-`submit_review_result` keeps the existing digest-bound two-step confirmation:
+`submit_review_result` keeps the existing digest-bound two-call safety handshake with one user-facing confirmation:
 
 1. The first call returns the exact proposed payload and digest without making
    a backend write.
-2. The user confirms the displayed draft.
-3. The second call must carry the matching confirmation digest.
+2. The skill shows the exact proposal, then asks the user to confirm or cancel
+   once before making the first submission call.
+3. After confirmation, if the first call returns `CONFIRMATION_REQUIRED`, the
+   skill automatically makes the second call with the matching digest.
 4. Only the matching second call may perform the single backend POST.
 
 Cancellation, missing confirmation, changed payload, mismatched digest, and

@@ -50,6 +50,35 @@ test('setup and review guidance keep state-dependent actions ordered', () => {
   assert.doesNotMatch(noTaskSetup, /review next/);
 
   const draftGuidance = skill.slice(skill.indexOf('`/slr review <taskId>`:'));
-  assert.match(draftGuidance, /show `confirm` and `cancel` as the only next actions/);
-  assert.ok(draftGuidance.indexOf('confirm') < draftGuidance.indexOf('Never suggest or call a submit path'));
+  assert.match(draftGuidance, /ask for one `confirm` or `cancel`/);
+  assert.match(draftGuidance, /do not ask for a second confirmation/);
+  assert.match(draftGuidance, /After a successful submission/);
+  assert.ok(draftGuidance.indexOf('confirm') < draftGuidance.indexOf('do not ask for a second confirmation'));
+});
+
+test('review confirmation keeps the digest handshake internal and exposes next actions', () => {
+  assert.match(skill, /USER_CONFIRMATION/);
+  assert.match(skill, /DIGEST_HANDSHAKE_AND_SUBMIT/);
+  assert.match(skill, /Never call `submit_review_result` before an explicit user confirmation/);
+  assert.match(skill, /Reply `confirm` once/);
+  assert.match(skill, /digest step is handled automatically/);
+  assert.match(commands, /After a successful submission/);
+  assert.doesNotMatch(skill, /ask for the final confirmation/);
+});
+
+test('task responses require visible state-specific next actions', () => {
+  const taskListStart = commands.indexOf('## Task list response');
+  const fullTextStart = commands.indexOf('## Full-text response', taskListStart);
+  const taskList = commands.slice(taskListStart, fullTextStart);
+  assert.match(taskList, /Suggested next actions/);
+  assert.match(taskList, /\/slr task <taskId>/);
+  assert.match(taskList, /\/slr review <taskId>/);
+  assert.match(taskList, /upload the PDF/i);
+
+  const taskDetailStart = commands.indexOf('## Task detail response');
+  const taskDetailEnd = commands.indexOf('## Full-text response', taskDetailStart);
+  const taskDetail = commands.slice(taskDetailStart, taskDetailEnd);
+  assert.match(taskDetail, /Suggested next actions/);
+  assert.match(taskDetail, /Full text available/);
+  assert.match(taskDetail, /Full text unavailable/);
 });

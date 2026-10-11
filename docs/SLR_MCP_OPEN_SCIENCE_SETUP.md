@@ -22,7 +22,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Quick setup behavior
 
-The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, asks only for the project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, creates or updates then enables the Open-Science connector. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
+The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, asks only for the project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, creates or updates then enables the Open-Science connector. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
 
 Use `--json` for a non-interactive report. If automatic registration is unavailable, import the generated connector configuration manually. The connector arguments include `--profile <name>`, so the root `--mcp` launcher can load the matching protected local token. After the connector and skill are available, open a new Open-Science conversation and run `/slr setup`; that chat command performs the read-only check and does not collect credentials.
 
@@ -74,7 +74,7 @@ npx github:ResearchPulse/slr_skill_open_science setup `
   --register
 ```
 
-Automatic registration and enabling only require a compatible `open-science` CLI. A Credential ID is optional; it is used only when the host should override the token loaded from the local profile.
+Automatic registration and enabling require a compatible `open-science` CLI; setup starts its daemon when necessary. A Credential ID is optional; it is used only when the host should override the token loaded from the local profile. If the CLI is missing or not on `PATH`, setup does not fail the API flow; import the generated secret-free configuration manually after installing Open-Science.
 
 Nếu registration không khả dụng, dùng lệnh pinned sau để in JSON và import thủ công:
 
@@ -142,14 +142,14 @@ Connector production nên truyền `--profile <name>` cùng root package. Launch
 
 Chọn permission mode **Ask for approval** trong Open-Science.
 
-`submit_review_result` là write tool. Luồng ghi có đúng hai bước xác nhận độc lập:
+`submit_review_result` là write tool. Luồng ghi có một lần xác nhận người dùng và hai call MCP nội bộ:
 
-1. Skill `/slr review` lưu draft, hiển thị decision, reasoning và data cuối cùng rồi hỏi `confirm` hoặc `cancel`. Chỉ câu trả lời `confirm` mới được gọi write tool.
-2. Lần gọi write đầu tiên chỉ tạo yêu cầu xác nhận và trả payload digest; không gửi request ghi. Sau khi người dùng xác nhận digest, skill gọi lại chính `submit_review_result` với `confirmation: { confirm: true, digest }`. Chỉ sau đó server mới gửi đúng một POST đến backend.
+1. Skill `/slr review` lưu draft, hiển thị decision, reasoning, data và hỏi người dùng `confirm` hoặc `cancel` đúng một lần.
+2. Nếu `confirm`, skill gọi `submit_review_result` với payload chính xác. Nếu call đầu trả về `CONFIRMATION_REQUIRED` và digest, skill tự gọi lại chính tool với payload không đổi và `confirmation: { confirm: true, digest }`. Chỉ sau đó server mới gửi đúng một POST đến backend.
 
-Permission mode của host không thay thế hai bước trên. Nếu một bước bị từ chối hoặc digest không khớp thì không có request ghi nào được gửi. Cơ chế này không phụ thuộc vào MCP elicitation nên tương thích với Open-Science hiện tại.
+Permission mode của host không thay thế digest safety. Nếu người dùng hủy, call đầu bị từ chối hoặc digest không khớp thì không có request ghi nào được gửi. Skill tự xử lý call digest sau một lần xác nhận, nên Open-Science không hiển thị thêm prompt xác nhận thứ hai.
 
-Nếu người dùng không xác nhận lượt thứ hai, dừng ở draft; không retry và không gửi POST.
+Nếu người dùng trả lời `cancel`, dừng ở draft; không retry và không gửi POST.
 
 ## 5. Dùng skill `/slr`
 
@@ -169,7 +169,7 @@ Nếu người dùng không xác nhận lượt thứ hai, dừng ở draft; kh�
 
 Không có `/slr submit`; submit chỉ là bước cuối bên trong `/slr review` sau xác nhận rõ ràng.
 
-Skill hiển thị `Suggested next actions` sau các lệnh. Gợi ý sẽ phù hợp với trạng thái task: có task thì gợi ý xem task/review, không có task thì gợi ý assign paper, full text đang xử lý thì chờ retry, còn full text không có thì upload PDF trên web app. Khi draft đã hiển thị, chỉ còn `confirm` hoặc `cancel`.
+Skill bắt buộc hiển thị block `Suggested next actions` sau mọi lệnh thành công, đặc biệt sau `/slr tasks`, `/slr task`, `/slr review` và sau submit/cancel. Gợi ý sẽ phù hợp với trạng thái task: có task thì gợi ý xem task/review, không có task thì gợi ý assign paper, full text đang xử lý thì chờ retry, còn full text không có thì upload PDF trên web app. Khi draft đã sẵn sàng, chỉ còn một lần hỏi `confirm` hoặc `cancel`; digest call được xử lý tự động.
 
 ## 6. Xử lý lỗi
 

@@ -18,6 +18,10 @@ import { prepareProfile, testProfileConnection } from './setup.js';
 import { initializeWorkspace, listAudit, listDrafts } from './workspace.js';
 
 const DEFAULT_COMMAND = 'setup';
+const DAEMON_POLL_ATTEMPTS = 8;
+const DAEMON_POLL_DELAY_MS = 250;
+const OPEN_SCIENCE_STATUS_TIMEOUT_MS = 2_000;
+const OPEN_SCIENCE_START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_OPTION_PREFIXES = ['--token', '--agent-token', '--api-key', '--password', '--secret'];
 const VALUE_FLAGS = new Set([
   '--profile', '--name', '--api-base-url', '--project-id', '--project-name',
@@ -84,9 +88,19 @@ function openScienceCommand(executable, args, input = undefined) {
     encoding: 'utf8',
     shell: false,
     stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: 15_000,
+    timeout: args[0] === 'status'
+      ? OPEN_SCIENCE_STATUS_TIMEOUT_MS
+      : args[0] === 'start'
+        ? OPEN_SCIENCE_START_TIMEOUT_MS
+        : 15_000,
     windowsHide: true,
   });
+}
+
+function waitMilliseconds(milliseconds) {
+  if (!milliseconds || milliseconds <= 0) return;
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(signal, 0, 0, milliseconds);
 }
 
 function parseJsonOutput(stdout) {
@@ -146,6 +160,36 @@ function failureCode(result) {
   return value?.error?.code || value?.code || null;
 }
 
+function daemonState(result) {
+  if (!result || result.error || result.status !== 0) return { known: false, running: false };
+  const value = parseJsonOutput(result.stdout);
+  return typeof value?.running === 'boolean'
+    ? { known: true, running: value.running }
+    : { known: false, running: false };
+}
+
+export function ensureOpenScienceDaemon(
+  executable,
+  run = openScienceCommand,
+  { pollAttempts = DAEMON_POLL_ATTEMPTS, pollDelayMs = DAEMON_POLL_DELAY_MS } = {},
+) {
+  const initial = daemonState(run(executable, ['status', '--json']));
+  if (initial.known && initial.running) return { ready: true, started: false };
+
+  const started = run(executable, ['start', '--no-open']);
+  if (started.error || started.status !== 0) {
+    return { ready: false, started: false, reason: 'open-science-daemon-start-failed' };
+  }
+
+  for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+    const current = daemonState(run(executable, ['status', '--json']));
+    if (current.known && current.running) return { ready: true, started: true };
+    if (attempt < pollAttempts - 1) waitMilliseconds(pollDelayMs);
+  }
+
+  return { ready: false, started: true, reason: 'open-science-daemon-not-ready' };
+}
+
 function connectorIdFromAddOutput(stdout, fallback) {
   const value = parseJsonOutput(stdout);
   return value?.id || value?.connectorId || value?.connector?.id || value?.data?.id || fallback;
@@ -170,11 +214,18 @@ export function writeConnectorConfig(profile, environment = process.env) {
   return target;
 }
 
-export function registerConnector(profile, report, run = openScienceCommand) {
+export function registerConnector(profile, report, run = openScienceCommand, ensureDaemon = ensureOpenScienceDaemon) {
   if (!report.openScienceCli.available || !report.openScienceCli.executable) {
     return { registered: false, reason: 'open-science-cli-not-detected' };
   }
   const executable = report.openScienceCli.executable;
+  const daemon = ensureDaemon(executable, run);
+  if (!daemon?.ready) {
+    return {
+      registered: false,
+      reason: daemon?.reason || 'open-science-daemon-not-ready',
+    };
+  }
   const connector = connectorConfig(profile);
   const listed = run(executable, ['connector', 'list', '--json']);
   const existingId = listed.error || listed.status !== 0
@@ -240,7 +291,20 @@ function commandPath() {
   return process.platform === 'win32' ? 'where.exe' : 'which';
 }
 
-function detectOpenScienceCli() {
+function installedOpenScienceCliCandidates(environment = process.env) {
+  if (process.platform !== 'win32') return [];
+  const candidates = [
+    environment.OPEN_SCIENCE_CLI,
+    environment.APPDATA && join(environment.APPDATA, 'Open-Science', 'open-science.cmd'),
+    environment.APPDATA && join(environment.APPDATA, 'Open-Science', 'bin', 'open-science.cmd'),
+    environment.LOCALAPPDATA && join(environment.LOCALAPPDATA, 'Open-Science', 'open-science.cmd'),
+    environment.LOCALAPPDATA && join(environment.LOCALAPPDATA, 'Open-Science', 'bin', 'open-science.cmd'),
+    environment.APPDATA && join(environment.APPDATA, 'npm', 'open-science.cmd'),
+  ];
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function detectOpenScienceCli(environment = process.env) {
   const result = spawnSync(commandPath(), ['open-science'], {
     encoding: 'utf8',
     shell: false,
@@ -249,12 +313,15 @@ function detectOpenScienceCli() {
     windowsHide: true,
   });
 
-  if (result.status !== 0 || result.error) {
-    return { available: false };
+  if (result.status === 0 && !result.error) {
+    const executable = result.stdout.trim().split(/\r?\n/)[0];
+    if (executable) return { available: true, executable, source: 'path' };
   }
 
-  const executable = result.stdout.trim().split(/\r?\n/)[0];
-  return executable ? { available: true, executable } : { available: false };
+  const executable = installedOpenScienceCliCandidates(environment).find(candidate => existsSync(candidate));
+  return executable
+    ? { available: true, executable, source: 'known-path' }
+    : { available: false };
 }
 
 function inspectPackage(packageRoot) {
@@ -341,10 +408,16 @@ function printSetup(report, asJson, setup = {}) {
     console.log('SLR setup incomplete');
     console.log('API: not tested');
   }
-  if (setup.registration?.registered && setup.registration.enabled) {
+  if (!setup.registration) {
+    console.log('Connector: registration skipped');
+  } else if (setup.registration.registered && setup.registration.enabled) {
     console.log('Connector: enabled');
-  } else if (setup.registration?.registered) {
+  } else if (setup.registration.registered) {
     console.log(`Connector: registered but not enabled (${setup.registration.reason || 'unknown error'})`);
+  } else if (setup.registration.reason === 'open-science-cli-not-detected') {
+    console.log('Connector: Open-Science CLI not found (manual import required)');
+  } else if (setup.registration.reason?.startsWith('open-science-daemon-')) {
+    console.log('Connector: Open-Science daemon could not be started (manual import required)');
   } else {
     console.log(`Connector: not registered automatically${setup.registration?.reason ? ` (${setup.registration.reason})` : ''}`);
   }

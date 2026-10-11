@@ -12,7 +12,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Fast setup (default)
 
-Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores the token in the selected local profile, tests the API, and creates or updates then enables the Open-Science connector. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
+Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores the token in the selected local profile, tests the API, and creates or updates then enables the Open-Science connector. When the Open-Science CLI is installed but its daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows it also checks common per-user install locations and the optional `OPEN_SCIENCE_CLI` path when the CLI is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
 
 The token is stored outside profile metadata under `SLR_CONFIG_DIR` (default `~/.slr`) with restrictive permissions where supported. It is never printed, placed in generated connector JSON, or sent to chat. Use `--json` for a non-interactive report; it never prompts for credentials. If automatic registration is unavailable, import the generated connector configuration manually. After setup, open a new Open-Science conversation and run `/slr setup` for the read-only check.
 
@@ -53,7 +53,7 @@ npx github:ResearchPulse/slr_skill_open_science config --profile afl-review
 npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review --register
 ```
 
-`--register` uses the local Open-Science CLI when available, then enables the registered connector. Otherwise import the JSON from `config` manually. The generated connector includes the selected profile; the root launcher reads that profile's protected local token. An Open-Science Credential bound to `SLR_AGENT_TOKEN` may be used as a host-managed override, but it is not required for the local-profile flow.
+`--register` uses the local Open-Science CLI when available, starts its daemon if needed, then enables the registered connector. Otherwise import the JSON from `config` manually. The generated connector includes the selected profile; the root launcher reads that profile's protected local token. An Open-Science Credential bound to `SLR_AGENT_TOKEN` may be used as a host-managed override, but it is not required for the local-profile flow. If the CLI is not installed or cannot be found, setup still completes the skill/profile/API steps and reports the manual-import fallback. Set `OPEN_SCIENCE_CLI` to an absolute CLI path if Open-Science uses a non-standard install location.
 
 ## Contents
 
@@ -65,7 +65,7 @@ npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review --reg
 - `skill/slr/` — `/slr` skill instructions for Open-Science task discovery, review drafting, and confirmation-gated submission.
 - `docs/SLR_MCP_OPEN_SCIENCE_SETUP.md` — setup and troubleshooting guide.
 
-Submission has exactly two confirmation gates: `/slr review` shows the saved draft and asks the user for `confirm` or `cancel`; only after `confirm` does it call `submit_review_result`. The first tool call returns a matching payload digest without writing, and the second call must include `confirmation: { confirm: true, digest }` immediately before the single backend POST. If either gate is declined, unavailable, or mismatched, no write is sent.
+Submission has one user-facing confirmation. `/slr review` shows the exact draft and asks for `confirm` or `cancel` once. On `confirm`, it calls `submit_review_result`; if that safe first call returns a matching payload digest, the skill automatically calls the same tool with `confirmation: { confirm: true, digest }` immediately before the single backend POST. If the user cancels, the host lacks the confirmation path, or the digest mismatches, no write is sent.
 
 ## Root MCP connector
 

@@ -29,11 +29,11 @@ The backend remains the source of truth. The package must expose exactly these f
 
 ## Design reference
 
-- [Approved architecture](../../docs/open-science-architecture.md)
-- [API contract in backend](../../../slr-be/docs/AI_AGENT_TASK_API_CONTRACT.md)
-- [Claude-style comparison](../../docs/CLAUDE_MCP_COMPARISON.md)
-- [Claude-style local setup ADR](../../docs/decisions/261011-claude-style-local-setup.md)
-- Supersedes `slr-be/plans/20261010-slr-open-science-mcp/plan.md`.
+- [Approved architecture](../../../open-science-architecture.md)
+- [API contract in backend](../../../../slr-be/docs/AI_AGENT_TASK_API_CONTRACT.md)
+- [Claude-style comparison](../../claude-mcp-comparison.md)
+- [Claude-style local setup ADR](../../decisions/261011-claude-style-local-setup.md)
+- Supersedes the earlier `docs/archive/plans` draft.
 
 ## Phases
 

@@ -16,7 +16,7 @@ The packaging experience follows the useful parts of `ResearchPulse/slr_skill_cl
 | Host | Open-Science local connector | Open-Science manages local connectors, skills, permissions, and credentials |
 | Profiles | Multi-project profiles | A user can manage multiple SLR projects without mixing tokens |
 | Drafts | Local `paper-review/` workspace | Keeps draft/edit/submit workflow auditable and recoverable |
-| Submission safety | Skill confirmation plus digest-bound MCP confirmation handshake | The user must approve the draft and then confirm the exact payload immediately before the backend write |
+| Submission safety | One user confirmation plus an internal digest-bound MCP handshake | The skill prepares the exact payload, asks once, then performs the matching confirmed call immediately before the backend write |
 | Credential priority | Selected profile URL plus local token; explicit `SLR_AGENT_TOKEN` may override the profile token | Keeps one-command setup usable while allowing host-managed token injection |
 
 ## Goals
@@ -87,7 +87,7 @@ The CLI provides the Claude-style operational layer without adding MCP tools:
 - MCP configuration output;
 - package/skill update and uninstall.
 
-The CLI can use `open-science connector` commands when available. Otherwise it asks the user to import a secret-free connector configuration. The profile metadata contains only token presence/source flags; the raw token is stored separately in the profile token directory and is loaded only by the root MCP launcher.
+The CLI can use `open-science connector` commands when available. Before registration it checks the daemon and starts it with `open-science start --no-open` when needed, so the desktop window does not have to be opened manually. Otherwise it asks the user to import a secret-free connector configuration. The profile metadata contains only token presence/source flags; the raw token is stored separately in the profile token directory and is loaded only by the root MCP launcher.
 
 ### MCP server
 
@@ -139,7 +139,7 @@ The raw project token is never stored in Git, the skill, review drafts, `audit.j
    → audit record + submitted record
 ```
 
-`submit_review_result` must not POST on its first call, when the user cancels, when the confirmation content is invalid, or when the digest does not match. The second call is bound to a canonical digest of the exact profile, task, decision, reasoning, and data payload. A 409 result is terminal and must not be retried.
+`submit_review_result` must not POST on its first call, when the user cancels, when the confirmation content is invalid, or when the digest does not match. The skill shows the exact draft and asks once before calling the tool; after the affirmative response it performs the first safe call and then automatically performs the second call when `CONFIRMATION_REQUIRED` returns. The second call is bound to a canonical digest of the exact profile, task, decision, reasoning, and data payload. A 409 result is terminal and must not be retried.
 
 ## Tool contract
 
@@ -179,8 +179,8 @@ Chosen because it preserves the desired user experience while matching the targe
 - `/slr status` works through `list_assigned_tasks`.
 - Profile switching never mixes project tokens and visibly identifies the active project.
 - Drafts can be reviewed/edited locally and audit records contain no raw token.
-- Declined first confirmation causes no write.
-- Missing or declined second digest confirmation causes no write.
+- Cancelled user confirmation causes no write.
+- Missing or mismatched second digest call causes no write.
 - Accepted confirmation produces exactly one POST.
 - A duplicate submission is surfaced as terminal 409 and is not retried.
 - The packed artifact can be installed and launched outside the backend repository.
@@ -189,10 +189,10 @@ Chosen because it preserves the desired user experience while matching the targe
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Open-Science CLI changes | Automatic registration breaks | Keep generated JSON import fallback and version-check CLI capabilities |
+| Open-Science CLI changes | Automatic registration or daemon startup breaks | Keep generated JSON import fallback, bounded readiness polling, and version-check CLI capabilities |
 | Native credential API unavailable | Host registration becomes manual | Keep the protected local profile token and import the secret-free connector configuration, then reconnect |
 | Profile changes while connector is running | Wrong project token | Require reconnect/restart and show active profile/project |
-| Host does not support MCP elicitation | Confirmation path unavailable | Use the explicit second-call digest handshake; never silently downgrade to one confirmation |
+| Host does not support MCP elicitation | Interactive connector prompt unavailable | Use the skill-managed staging + digest call; never silently bypass the digest check |
 | GitHub `npx` package lacks built artifacts | Installer starts but MCP fails | Prepack compile, tarball smoke test, and release checklist |
 | Mutable GitHub ref or compromised release path | Installer executes untrusted code | Use immutable production tags/commits, lockfiles, revision display, and artifact verification |
 

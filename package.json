@@ -9,7 +9,8 @@
   "files": [
     "bin",
     "cli",
-    "docs",
+    "docs/SLR_MCP_OPEN_SCIENCE_SETUP.md",
+    "docs/open-science-architecture.md",
     "skill",
     "mcp/slr-agent-mcp/out",
     "mcp/slr-agent-mcp/package.json",

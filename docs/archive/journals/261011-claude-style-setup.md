@@ -22,14 +22,18 @@ four-tool contract.
   connector import.
 - Kept generated connector configuration secret-free and added `--profile` to
   connector arguments.
+- Made connector registration start the Open-Science daemon with
+  `open-science start --no-open` when the CLI is available but the daemon is
+  stopped; Windows setup also checks common per-user install paths and
+  `OPEN_SCIENCE_CLI`.
 - Updated `/slr` help/setup wording so chat remains read-only and never asks for
   a token.
-- Preserved the digest-bound second confirmation for
-  `submit_review_result`.
+- Preserved the digest-bound second MCP call for
+  `submit_review_result` while reducing it to one user-facing confirmation.
 
 ## Verification
 
-- CLI tests: 10 passed.
+- CLI tests: 26 passed.
 - MCP tests: 22 passed.
 - MCP typecheck and stdio acceptance harness: passed.
 - Profile-backed launcher startup smoke: passed.
@@ -53,6 +57,8 @@ changed.
 
 - Validate the generated connector manually in Open-Science with a
   non-production project.
-- Run `/slr setup`, discover the four tools, and exercise both confirmation
-  gates.
+- Run `/slr setup`, discover the four tools, and exercise the single
+  user-facing confirmation flow.
+- Verify auto-start registration on a machine with Open-Science installed and
+  retain manual connector import as the fallback when its CLI is unavailable.
 - Complete release security review and decide whether to commit/tag/push.

@@ -9,7 +9,7 @@ Make the `/slr` skill guide users through the next safe action after each comman
 - Show a concise `Suggested next actions` section after setup, status, task list, task details, full-text retrieval, and review drafts.
 - When full text is unavailable or still processing, suggest uploading/waiting and do not suggest reviewing invented content.
 - When full text is available, suggest the matching review command.
-- Preserve the existing two-step `confirm`/digest confirmation before `submit_review_result`.
+- Preserve the existing two-call digest handshake while reducing it to one user-facing `confirm`/`cancel` prompt before `submit_review_result`.
 - Keep the exact four-tool MCP contract unchanged.
 
 ## Touchpoints

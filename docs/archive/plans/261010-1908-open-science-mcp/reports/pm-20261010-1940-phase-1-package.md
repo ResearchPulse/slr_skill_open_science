@@ -17,7 +17,7 @@
 - Root runtime dependencies for clean tarball execution.
 - `scripts/pack-smoke.mjs` clean-installs the tarball, checks the root bin, probes MCP startup, and checks token/unknown-argument non-disclosure.
 - README and Vietnamese setup documentation synchronized with the root connector command.
-- Phase journal under `docs/journals/`.
+- Phase journal under `docs/archive/journals/`.
 
 ## Verification
 
