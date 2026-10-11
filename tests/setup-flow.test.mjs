@@ -108,10 +108,43 @@ test('connector registration enables the connector after adding it', () => {
     registered: true,
     enabled: true,
     connector: 'connector-123',
+    updated: false,
   });
   assert.deepEqual(calls.map(call => call.args), [
+    ['connector', 'list', '--json'],
     ['connector', 'add', '--json'],
     ['connector', 'enable', 'connector-123'],
   ]);
-  assert.match(calls[0].input, /"name":"slr-default"/);
+  assert.match(calls[1].input, /"name":"slr-default"/);
+});
+
+test('connector registration updates an existing connector instead of adding a duplicate', () => {
+  const calls = [];
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr.example.test/api',
+    connectorName: 'slr-default',
+  };
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[1] === 'list') {
+      return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [{ id: 'connector-existing', name: 'slr-default' }] }) };
+    }
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run), {
+    registered: true,
+    enabled: true,
+    connector: 'connector-existing',
+    updated: true,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['connector', 'list', '--json'],
+    ['connector', 'update', 'connector-existing', '--json'],
+    ['connector', 'enable', 'connector-existing'],
+  ]);
 });
