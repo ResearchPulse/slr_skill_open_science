@@ -14,7 +14,13 @@ import {
   useProfile,
 } from './profile-store.js';
 import { installSkill } from './skill-store.js';
-import { prepareProfile, testProfileConnection } from './setup.js';
+import {
+  beginTokenConfiguration,
+  cancelTokenConfiguration,
+  commitTokenConfiguration,
+  prepareProfile,
+  testProfileConnection,
+} from './setup.js';
 import { initializeWorkspace, listAudit, listDrafts } from './workspace.js';
 
 const DEFAULT_COMMAND = 'setup';
@@ -26,6 +32,7 @@ const CREDENTIAL_OPTION_PREFIXES = ['--token', '--agent-token', '--api-key', '--
 const VALUE_FLAGS = new Set([
   '--profile', '--name', '--api-base-url', '--project-id', '--project-name',
   '--credential-id', '--connector-id', '--connector-name', '--skill-dir', '--limit',
+  '--operation', '--action',
 ]);
 
 function hasFlag(args, flag) {
@@ -352,13 +359,14 @@ Commands:
   profile   Manage project profiles (create, list, use, inspect, remove)
   workspace Initialize or inspect the local review workspace
   skill     Install or update the /slr skill for Open-Science import
-  config    Print a secret-free Open-Science connector configuration
+  config    Choose a profile and configure its project token
   doctor    Check package assets, profiles, and Open-Science CLI availability
   update    Show update guidance without changing existing profiles
   help      Show this help
 
 In-chat /slr commands (after the skill is imported):
   /slr help  Show the SLR command menu and confirmation rule
+  /slr config Configure or switch the local project profile
   /slr setup Run the read-only quick check via list_assigned_tasks(limit: 1)
 
 The package command slr setup installs/prepares local assets and connector
@@ -375,9 +383,11 @@ Setup flags:
   --no-register skip connector registration
 
 Credentials:
-  Setup asks for the token with hidden terminal input and stores it in the
-  selected local profile. Never paste the token into chat, CLI flags, source
-  files, generated connector JSON, or logs; this help output contains no secret value.`);
+  Setup asks for the token with hidden terminal input. Config accepts a token
+  only through stdin, validates it before committing, and never prints it.
+  Use config profiles, config begin --profile NAME --token-stdin --json,
+  then config commit --operation ID --action save|switch|update --json.
+  Never pass a token in argv or generated connector JSON.`);
 }
 
 function printSetup(report, asJson, setup = {}) {
@@ -498,6 +508,59 @@ function runSkillCommand(args, asJson, packageRoot) {
   printValue(installSkill(packageRoot, flagValue(args, '--skill-dir')), asJson);
 }
 
+async function readAllStdin() {
+  let value = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) value += chunk;
+  return value.trim();
+}
+
+async function runConfigCommand(args, asJson, report) {
+  const configIndex = args.indexOf('config');
+  const candidate = args[configIndex + 1];
+  const subcommand = candidate && !candidate.startsWith('--') ? candidate : 'print';
+  if (subcommand === 'profiles') {
+    printValue({ profiles: listProfiles() }, true);
+    return;
+  }
+  if (subcommand === 'begin') {
+    if (!hasFlag(args, '--token-stdin')) throw new Error('config begin requires --token-stdin');
+    const token = await readAllStdin();
+    const result = await beginTokenConfiguration({
+      name: profileNameFrom(args),
+      apiBaseUrl: flagValue(args, '--api-base-url'),
+      token,
+    });
+    printValue(result, true);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+  if (subcommand === 'commit') {
+    const operation = flagValue(args, '--operation');
+    const action = flagValue(args, '--action');
+    if (!operation || !action) throw new Error('config commit requires --operation and --action');
+    const result = commitTokenConfiguration(operation, action, process.env, profileNameFrom(args));
+    const connectorConfigPath = writeConnectorConfig(result.profile);
+    const registration = registerConnector(result.profile, report);
+    const connectorReady = registration.registered === true && registration.enabled === true;
+    const activeProfile = connectorReady ? useProfile(result.profile.name) : getActiveProfile();
+    if (report.openScienceCli.available && !connectorReady) process.exitCode = 1;
+    printValue({ ...result, activeProfile, connectorConfigPath, registration }, true);
+    return;
+  }
+  if (subcommand === 'cancel') {
+    const operation = flagValue(args, '--operation');
+    if (!operation) throw new Error('config cancel requires --operation');
+    printValue(cancelTokenConfiguration(operation), true);
+    return;
+  }
+  if (subcommand === 'print') {
+    printValue(connectorConfig(selectedProfile(args)), true);
+    return;
+  }
+  throw new Error('unknown config command; use profiles, begin, commit, cancel, or print');
+}
+
 export async function main(args = process.argv.slice(2), options = {}) {
   rejectCredentialArguments(args);
   const packageRoot = options.packageRoot || resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -571,7 +634,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
   }
 
   if (command === 'config') {
-    printValue(connectorConfig(selectedProfile(args)), true);
+    await runConfigCommand(args, asJson, report);
     return;
   }
 

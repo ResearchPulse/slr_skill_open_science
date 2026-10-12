@@ -22,7 +22,10 @@ async function connectPair(client: Client, server: ReturnType<typeof createServe
   await client.connect(clientTransport);
 }
 
-const reviewInput = { decision: 'INCLUDE', reasoning: 'The criteria match.' };
+const reviewInput = {
+  decision: 'INCLUDE',
+  reasoning: 'The criteria match.',
+};
 
 function reviewArguments(confirmation?: { confirm: boolean; digest: string }): Record<string, unknown> {
   return {

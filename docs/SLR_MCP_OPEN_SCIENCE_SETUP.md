@@ -198,3 +198,9 @@ Package hiện expose đúng bốn tool, không có health/config/helper tool b�
 - `get_assigned_task`
 - `get_task_fulltext`
 - `submit_review_result`
+
+## In-chat profile configuration
+
+Use `/slr config` when the local project profile or token needs to change. The skill lists safe profiles first, asks the user to choose or create a profile, then passes one pasted token through the host's protected local stdin bridge to the CLI. The CLI validates the token before writing anything. An exact token match offers a profile switch; a matching project ID offers a token update; otherwise the token is saved to the selected profile. The token is never displayed, sent through MCP, or written to connector JSON.
+
+After the single save/switch/update confirmation, the CLI updates the secret-free connector configuration and enables it when the Open-Science CLI is available. Reconnect the connector and run `/slr status`. If the host cannot run the local command bridge, use the terminal package command instead; `/slr config` must not claim success without a local commit.

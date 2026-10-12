@@ -9,8 +9,9 @@ SLR review menu
 1. Check connection and assigned tasks (/slr status)
 2. List assigned papers (/slr tasks)
 3. Review a paper (/slr review next)
-4. Run quick setup/check (/slr setup)
-5. Show help (/slr help)
+4. Configure or switch a project profile (/slr config)
+5. Run quick setup/check (/slr setup)
+6. Show help (/slr help)
 ```
 
 Use numbered choices as a fallback when the host does not provide command buttons.
@@ -41,7 +42,7 @@ Do not suggest `/slr review` for unavailable or pending full text. Do not sugges
 
 ## Review confirmation response
 
-The skill shows the exact payload before the first submission call. The user sees one confirmation prompt:
+The skill shows the exact payload, including the agent's reasoning/reason-comment, before the first submission call. The user sees one confirmation prompt:
 
 ```text
 Reply `confirm` once to record this result, or `cancel` to stop.
@@ -89,7 +90,24 @@ SLR setup is incomplete
 
 Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
 
-If the user offers to paste a token into chat, decline that path and direct them to the terminal quick setup or the connector's encrypted Access token Credential for `SLR_AGENT_TOKEN`. If the token was already pasted, do not echo or use it; recommend rotation in the SLR project settings.
+If the user offers to paste a token outside `/slr config`, decline that path and direct them to the terminal quick setup or the connector's encrypted Access token Credential for `SLR_AGENT_TOKEN`. `/slr config` may pass one pasted token through the host's protected local stdin bridge; never echo or use it in MCP. If the token was exposed outside that path, recommend rotation in the SLR project settings.
+
+## Config response
+
+`/slr config` should be concise:
+
+```text
+SLR profile configured
+Profile: <name>
+Project: <project name or id>
+Connector: <enabled|reconnect required>
+
+Suggested next actions:
+- Restart/reconnect the connector if requested
+- /slr status — verify the read-only connection
+```
+
+When a token matches another local profile, show one choice only: `Token belongs to profile <name>. Switch to it?` If multiple safe profiles match, ask the user to choose a profile name before committing. For a matching project with a rotated token, ask whether to update that profile. Do not display the token or expose the pending operation secret. Report `reconnect required` until `/slr status` succeeds after the connector restart.
 
 ## Status response
 

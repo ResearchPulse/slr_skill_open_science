@@ -1,9 +1,18 @@
 import { createInterface } from 'node:readline';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import {
   createProfile,
+  commitProfileConfiguration,
+  findProfilesByToken,
+  findProfilesByProjectId,
+  getConfigRoot,
   getActiveProfile,
   getProfile,
   loadProfileToken,
+  normalizeApiBaseUrl,
+  normalizeProfileName,
   saveProfileToken,
   updateProfile,
 } from './profile-store.js';
@@ -141,11 +150,16 @@ export async function testProfileConnection(profile, token) {
     }
     const project = body.data.project || {};
     const items = Array.isArray(body.data.items) ? body.data.items : [];
+    const redact = value => {
+      const text = typeof value === 'string' ? value : null;
+      if (!text) return null;
+      return text.split(String(token)).join('[REDACTED]');
+    };
     return {
       connected: true,
       status: response.status,
-      projectId: typeof project.id === 'string' ? project.id : null,
-      projectName: typeof project.name === 'string' ? project.name : null,
+      projectId: redact(project.id),
+      projectName: redact(project.name),
       assignedTasks: items.length,
       hasMore: body.data.hasMore === true,
     };
@@ -157,4 +171,190 @@ export async function testProfileConnection(profile, token) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const CONFIG_OPERATION_TTL_MS = 10 * 60 * 1000;
+
+function pendingConfigDirectory(environment) {
+  return join(getConfigRoot(environment), 'pending-config');
+}
+
+function pruneExpiredPendingConfigs(environment) {
+  const directory = pendingConfigDirectory(environment);
+  if (!existsSync(directory)) return;
+  for (const entry of readdirSync(directory)) {
+    if (!entry.endsWith('.json')) continue;
+    const operationId = entry.slice(0, -'.json'.length);
+    try {
+      const metadata = JSON.parse(readFileSync(join(directory, entry), 'utf8'));
+      if (!metadata?.expiresAt || Date.parse(metadata.expiresAt) <= Date.now()) {
+        removePendingConfig(operationId, environment);
+      }
+    } catch {
+      removePendingConfig(operationId, environment);
+    }
+  }
+}
+
+function operationIdFromInput(value) {
+  const operationId = String(value || '').trim();
+  if (!/^[a-f0-9-]{16,80}$/i.test(operationId)) throw new Error('invalid configuration operation id');
+  return operationId;
+}
+
+function pendingPaths(operationIdInput, environment) {
+  const operationId = operationIdFromInput(operationIdInput);
+  const directory = pendingConfigDirectory(environment);
+  return {
+    directory,
+    metadata: join(directory, `${operationId}.json`),
+    secret: join(directory, `${operationId}.secret`),
+  };
+}
+
+function writeProtectedFile(path, value) {
+  mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  try { chmodSync(temporary, 0o600); } catch { /* Windows may not support POSIX modes. */ }
+  try {
+    renameSync(temporary, path);
+    try { chmodSync(path, 0o600); } catch { /* Windows may not support POSIX modes. */ }
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+}
+
+function removePendingConfig(operationIdInput, environment) {
+  const paths = pendingPaths(operationIdInput, environment);
+  for (const path of [paths.metadata, paths.secret]) {
+    if (existsSync(path)) unlinkSync(path);
+  }
+}
+
+function readPendingConfig(operationIdInput, environment) {
+  const paths = pendingPaths(operationIdInput, environment);
+  if (!existsSync(paths.metadata) || !existsSync(paths.secret)) throw new Error('configuration operation not found or already completed');
+  let metadata;
+  try {
+    metadata = JSON.parse(readFileSync(paths.metadata, 'utf8'));
+  } catch {
+    throw new Error('configuration operation metadata is invalid');
+  }
+  if (!metadata?.expiresAt || Date.parse(metadata.expiresAt) <= Date.now()) {
+    removePendingConfig(operationIdInput, environment);
+    throw new Error('configuration operation expired; start /slr config again');
+  }
+  const token = readFileSync(paths.secret, 'utf8').trim();
+  if (!token) throw new Error('configuration operation has no token');
+  return { metadata, token };
+}
+
+function publicMatch(type, profiles) {
+  const matches = Array.isArray(profiles) ? profiles : profiles ? [profiles] : [];
+  const safeProfiles = matches.map(profile => ({
+    name: profile.name,
+    projectId: profile.projectId || null,
+    projectName: profile.projectName || null,
+    active: profile.active === true,
+  }));
+  return {
+    type: type || 'none',
+    profile: safeProfiles[0] || null,
+    profiles: safeProfiles,
+    requiresProfileChoice: safeProfiles.length > 1,
+  };
+}
+
+export async function beginTokenConfiguration({ name, apiBaseUrl, token, environment = globalThis.process['env'] } = {}) {
+  pruneExpiredPendingConfigs(environment);
+  const candidateName = normalizeProfileName(name || getActiveProfile(environment)?.name || 'default');
+  const existing = (() => {
+    try { return getProfile(candidateName, environment); } catch (error) {
+      if (/profile not found/i.test(error instanceof Error ? error.message : '')) return null;
+      throw error;
+    }
+  })();
+  const candidateUrl = normalizeApiBaseUrl(apiBaseUrl || existing?.apiBaseUrl || DEFAULT_API_BASE_URL);
+  const candidateToken = String(token || '').trim();
+  if (!candidateToken) throw new Error('agent token must not be empty');
+
+  const connection = await testProfileConnection({ apiBaseUrl: candidateUrl }, candidateToken);
+  if (!connection.connected) return { ok: false, profile: existing, connection, match: publicMatch('none', []) };
+
+  const exactMatches = findProfilesByToken(candidateToken, environment, candidateUrl);
+  const projectMatches = connection.projectId
+    ? findProfilesByProjectId(connection.projectId, environment, candidateUrl)
+    : [];
+  const match = exactMatches.length > 0
+    ? publicMatch('exact', exactMatches)
+    : projectMatches.length > 0
+      ? publicMatch('project', projectMatches)
+      : publicMatch('none', []);
+  const operationId = randomUUID();
+  const expiresAt = new Date(Date.now() + CONFIG_OPERATION_TTL_MS).toISOString();
+  const paths = pendingPaths(operationId, environment);
+  try {
+    writeProtectedFile(paths.secret, `${candidateToken}\n`);
+    writeProtectedFile(paths.metadata, `${JSON.stringify({
+      operationId,
+      profileName: candidateName,
+      apiBaseUrl: candidateUrl,
+      expiresAt,
+      connection,
+      match,
+    }, null, 2)}\n`);
+  } catch (error) {
+    removePendingConfig(operationId, environment);
+    throw error;
+  }
+  return {
+    ok: true,
+    operationId,
+    expiresAt,
+    profile: existing || { name: candidateName, apiBaseUrl: candidateUrl, projectId: null, projectName: null, active: false },
+    connection,
+    match,
+    actions: match.type === 'exact' ? ['switch'] : match.type === 'project' ? ['update'] : ['save'],
+  };
+}
+
+export function cancelTokenConfiguration(operationId, environment = globalThis.process['env']) {
+  removePendingConfig(operationId, environment);
+  return { ok: true, cancelled: operationIdFromInput(operationId) };
+}
+
+export function commitTokenConfiguration(operationId, action, environment = globalThis.process['env'], selectedProfileName = undefined) {
+  const { metadata, token } = readPendingConfig(operationId, environment);
+  const requestedAction = String(action || '').trim().toLowerCase();
+  const expectedAction = metadata.match?.type === 'exact'
+    ? 'switch'
+    : metadata.match?.type === 'project'
+      ? 'update'
+      : 'save';
+  if (requestedAction !== expectedAction) {
+    throw new Error(`configuration action must be ${expectedAction} for this operation`);
+  }
+
+  const candidates = Array.isArray(metadata.match?.profiles) ? metadata.match.profiles : [];
+  if (candidates.length > 1 && !selectedProfileName) {
+    throw new Error('configuration matches multiple profiles; choose one with --profile');
+  }
+  const targetName = selectedProfileName || candidates[0]?.name || metadata.profileName;
+  if (candidates.length > 0 && !candidates.some(profile => profile.name === targetName)) {
+    throw new Error('selected profile is not one of the matched profiles');
+  }
+  const existingProfile = (() => {
+    try { return getProfile(targetName, environment); } catch (error) {
+      if (/profile not found/i.test(error instanceof Error ? error.message : '') && candidates.length === 0) return null;
+      throw error;
+    }
+  })();
+  const profile = commitProfileConfiguration(targetName, {
+    apiBaseUrl: existingProfile?.apiBaseUrl || metadata.apiBaseUrl,
+    projectId: metadata.connection.projectId,
+    projectName: metadata.connection.projectName,
+  }, token, environment);
+  removePendingConfig(operationId, environment);
+  return { ok: true, action: requestedAction, profile, connection: metadata.connection, match: metadata.match };
 }

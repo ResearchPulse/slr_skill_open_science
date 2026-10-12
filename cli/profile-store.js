@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 
 const STORE_VERSION = 1;
 const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -177,14 +177,7 @@ export function updateProfile(nameInput, changes, environment = process.env) {
   return publicProfile(profile);
 }
 
-export function saveProfileToken(nameInput, tokenInput, environment = process.env) {
-  const configRoot = getConfigRoot(environment);
-  const name = normalizeProfileName(nameInput);
-  const store = readStore(configRoot);
-  const profile = store.profiles[name];
-  if (!profile) throw new Error(`profile not found: ${name}`);
-  const token = String(tokenInput || '').trim();
-  if (!token) throw new Error('agent token must not be empty');
+function writeTokenFile(configRoot, name, token) {
   const directory = ensureTokenDirectory(configRoot);
   const target = tokenPath(configRoot, name);
   const temporary = `${target}.${randomUUID()}.tmp`;
@@ -196,11 +189,71 @@ export function saveProfileToken(nameInput, tokenInput, environment = process.en
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);
   }
+  return target;
+}
+
+export function saveProfileToken(nameInput, tokenInput, environment = process.env) {
+  const configRoot = getConfigRoot(environment);
+  const name = normalizeProfileName(nameInput);
+  const store = readStore(configRoot);
+  const profile = store.profiles[name];
+  if (!profile) throw new Error(`profile not found: ${name}`);
+  const token = String(tokenInput || '').trim();
+  if (!token) throw new Error('agent token must not be empty');
+  writeTokenFile(configRoot, name, token);
   profile.tokenSource = 'local-profile-token';
   profile.hasLocalToken = true;
   profile.updatedAt = now();
   writeStore(configRoot, store);
   return publicProfile(profile);
+}
+
+export function commitProfileConfiguration(nameInput, changes, tokenInput, environment = process.env) {
+  const configRoot = getConfigRoot(environment);
+  const name = normalizeProfileName(nameInput);
+  const token = String(tokenInput || '').trim();
+  if (!token) throw new Error('agent token must not be empty');
+  const store = readStore(configRoot);
+  const originalStore = JSON.parse(JSON.stringify(store));
+  const target = tokenPath(configRoot, name);
+  const originalTokenExists = existsSync(target);
+  const originalToken = originalTokenExists ? readFileSync(target, 'utf8') : null;
+  const timestamp = now();
+  const workspaceId = randomUUID();
+  const profile = store.profiles[name] || {
+    name,
+    apiBaseUrl: normalizeApiBaseUrl(changes.apiBaseUrl),
+    projectId: null,
+    projectName: null,
+    credentialId: null,
+    connectorId: null,
+    connectorName: `slr-${name}`,
+    tokenSource: 'unconfigured',
+    hasLocalToken: false,
+    workspaceId,
+    workspaceRoot: profileWorkspace(configRoot, name, workspaceId),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  try {
+    if (changes.apiBaseUrl !== undefined) profile.apiBaseUrl = normalizeApiBaseUrl(changes.apiBaseUrl);
+    if (changes.projectId !== undefined) profile.projectId = String(changes.projectId || '').trim() || null;
+    if (changes.projectName !== undefined) profile.projectName = String(changes.projectName || '').trim() || null;
+    profile.tokenSource = 'local-profile-token';
+    profile.hasLocalToken = true;
+    profile.updatedAt = timestamp;
+    store.profiles[name] = profile;
+    writeTokenFile(configRoot, name, token);
+    writeStore(configRoot, store);
+    return publicProfile(profile);
+  } catch (error) {
+    try {
+      if (originalTokenExists) writeTokenFile(configRoot, name, originalToken.trim());
+      else if (existsSync(target)) unlinkSync(target);
+      writeStore(configRoot, originalStore);
+    } catch { /* Preserve the original failure; the next invocation can repair the store. */ }
+    throw error;
+  }
 }
 
 export function loadProfileToken(nameInput, environment = process.env) {
@@ -212,6 +265,38 @@ export function loadProfileToken(nameInput, environment = process.env) {
   if (!existsSync(path)) return null;
   const token = readFileSync(path, 'utf8').trim();
   return token || null;
+}
+
+function tokenDigest(value) {
+  return createHash('sha256').update(String(value || ''), 'utf8').digest();
+}
+
+function tokensEqual(left, right) {
+  return timingSafeEqual(tokenDigest(left), tokenDigest(right));
+}
+
+export function findProfileByToken(tokenInput, environment = process.env) {
+  return findProfilesByToken(tokenInput, environment)[0] || null;
+}
+
+export function findProfilesByToken(tokenInput, environment = process.env, apiBaseUrlInput = undefined) {
+  const token = String(tokenInput || '').trim();
+  if (!token) return [];
+  const apiBaseUrl = apiBaseUrlInput ? normalizeApiBaseUrl(apiBaseUrlInput) : null;
+  return listProfiles(environment).filter(profile => {
+    if (!profile.hasLocalToken) return false;
+    if (apiBaseUrl && profile.apiBaseUrl !== apiBaseUrl) return false;
+    const saved = loadProfileToken(profile.name, environment);
+    return Boolean(saved && tokensEqual(token, saved));
+  });
+}
+
+export function findProfilesByProjectId(projectIdInput, environment = process.env, apiBaseUrlInput = undefined) {
+  const projectId = String(projectIdInput || '').trim();
+  if (!projectId) return [];
+  const apiBaseUrl = apiBaseUrlInput ? normalizeApiBaseUrl(apiBaseUrlInput) : null;
+  return listProfiles(environment).filter(profile => profile.projectId === projectId
+    && (!apiBaseUrl || profile.apiBaseUrl === apiBaseUrl));
 }
 
 export function profileTokenPath(nameInput, environment = process.env) {

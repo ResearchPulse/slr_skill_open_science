@@ -34,7 +34,7 @@ function confirmationMessage(taskId: string, input: SubmitReviewInput, config: M
     `Project: ${safeSecretDisplay(config.projectName, config.agentToken, 160)} (${safeSecretDisplay(config.projectId, config.agentToken, 160)})`,
     `Task: ${safeSecretDisplay(taskId, config.agentToken, 160)}`,
     `Decision: ${safeSecretDisplay(input.decision, config.agentToken, 100)}`,
-    `Reasoning preview (untrusted model text): ${safeSecretDisplay(reasoningPreview, config.agentToken)}`,
+    `Reason/comment preview (untrusted model text): ${safeSecretDisplay(reasoningPreview, config.agentToken)}`,
     `Payload digest: ${digest}`,
     'No backend write has happened yet.',
     'After the user confirms this exact payload, call submit_review_result again with confirmation.confirm=true and this digest.',
@@ -116,7 +116,11 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async ({ taskId, decision, reasoning, data, confirmation }): Promise<ToolTextResult> => {
-      const input: SubmitReviewInput = { decision, reasoning, ...(data === undefined ? {} : { data }) };
+      const input: SubmitReviewInput = {
+        decision,
+        reasoning,
+        ...(data === undefined ? {} : { data }),
+      };
       const digest = confirmationDigest(buildConfirmationPayload(config, taskId, input));
       if (!confirmation) {
         return confirmationRequiredResult(taskId, input, config, digest);

@@ -26,6 +26,20 @@ npx github:ResearchPulse/slr_skill_open_science --json
 
 After the skill is enabled, `/slr setup` is the quick in-chat setup check. It calls the read-only task listing, reports the connected project and assigned-task state, or shows only the missing connector settings. It never asks for the project token in chat and cannot modify Open-Science connector settings.
 
+Use `/slr config` when you want the in-chat profile/token wizard. It lists safe local profiles, asks you to choose or create one before accepting the project token, validates the token without committing a profile, and suggests exactly one action: switch to an exact-token profile, update a matching project profile, or save to the selected profile. The token is passed only through the host's protected local stdin bridge; it is never sent through MCP, printed, or written to connector JSON. After commit, reconnect the connector and run `/slr status`.
+
+This in-chat flow requires an Open-Science host that exposes a local command bridge. If the current host cannot run that bridge, `/slr config` must show the terminal fallback and must not claim that the profile or connector changed.
+
+The equivalent local CLI flow is:
+
+```text
+config profiles --json
+config begin --profile <name> --token-stdin --json   (the host supplies protected stdin)
+config commit --operation <operation-id> --action <save|switch|update> --json
+```
+
+Use `switch` or `update` instead of `save` when the validation result recommends that action. The pending operation expires after ten minutes and failed validation does not modify the selected profile.
+
 Use `doctor` to inspect packaged assets and Open-Science CLI availability:
 
 ```powershell

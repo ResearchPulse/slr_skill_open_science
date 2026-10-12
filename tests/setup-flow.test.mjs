@@ -4,8 +4,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createProfile, saveProfileToken } from '../cli/profile-store.js';
-import { prepareProfile, testProfileConnection } from '../cli/setup.js';
+import { createProfile, getActiveProfile, getProfile, saveProfileToken, updateProfile } from '../cli/profile-store.js';
+import {
+  beginTokenConfiguration,
+  commitTokenConfiguration,
+  prepareProfile,
+  testProfileConnection,
+} from '../cli/setup.js';
 import { ensureOpenScienceDaemon, registerConnector, writeConnectorConfig } from '../cli/slr.js';
 
 const daemonAlreadyReady = () => ({ ready: true, started: false });
@@ -340,4 +345,85 @@ test('missing Open-Science CLI keeps connector registration as a manual fallback
 
   assert.deepEqual(result, { registered: false, reason: 'open-science-cli-not-detected' });
   assert.equal(readinessChecked, false);
+});
+
+test('config wizard validates before commit and offers an exact-token profile switch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'slr-config-wizard-test-'));
+  const environment = { SLR_CONFIG_DIR: root };
+  const server = createServer((request, response) => {
+    assert.equal(request.headers.authorization, 'Bearer slrp_existing_secret');
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({
+      success: true,
+      data: { project: { id: 'project-1', name: 'Demo project' }, items: [], hasMore: false },
+    }));
+  });
+  try {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}/api`;
+    const existing = createProfile({ name: 'existing', apiBaseUrl: baseUrl }, environment);
+    saveProfileToken(existing.name, 'slrp_existing_secret', environment);
+    updateProfile(existing.name, { projectId: 'project-1', projectName: 'Demo project' }, environment);
+
+    const started = await beginTokenConfiguration({
+      name: 'new-profile',
+      apiBaseUrl: baseUrl,
+      token: 'slrp_existing_secret',
+      environment,
+    });
+    assert.equal(started.ok, true);
+    assert.equal(started.match.type, 'exact');
+    assert.equal(started.match.profile.name, 'existing');
+    assert.equal(JSON.stringify(started).includes('slrp_existing_secret'), false);
+    assert.throws(() => getProfile('new-profile', environment), /profile not found/);
+
+    const committed = commitTokenConfiguration(started.operationId, 'switch', environment);
+    assert.equal(committed.profile.name, 'existing');
+    assert.equal(getActiveProfile(environment).name, 'existing');
+    assert.equal(getProfile('existing', environment).hasLocalToken, true);
+  } finally {
+    server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('config wizard matches a project and updates the selected profile only after commit', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'slr-config-project-test-'));
+  const environment = { SLR_CONFIG_DIR: root };
+  const server = createServer((request, response) => {
+    assert.equal(request.headers.authorization, 'Bearer slrp_rotated_secret');
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({
+      success: true,
+      data: { project: { id: 'project-2', name: 'Rotated project' }, items: [], hasMore: false },
+    }));
+  });
+  try {
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}/api`;
+    const existing = createProfile({ name: 'project-two', apiBaseUrl: baseUrl, projectId: 'project-2', projectName: 'Rotated project' }, environment);
+    saveProfileToken(existing.name, 'slrp_old_secret', environment);
+    const duplicate = createProfile({ name: 'project-two-alt', apiBaseUrl: baseUrl, projectId: 'project-2', projectName: 'Rotated project' }, environment);
+    saveProfileToken(duplicate.name, 'slrp_other_secret', environment);
+
+    const started = await beginTokenConfiguration({
+      name: 'rotated-profile',
+      apiBaseUrl: baseUrl,
+      token: 'slrp_rotated_secret',
+      environment,
+    });
+    assert.equal(started.match.type, 'project');
+    assert.equal(started.match.requiresProfileChoice, true);
+    assert.deepEqual(started.match.profiles.map(profile => profile.name), ['project-two', 'project-two-alt']);
+    assert.equal(getProfile('project-two', environment).projectName, 'Rotated project');
+
+    assert.throws(() => commitTokenConfiguration(started.operationId, 'update', environment), /multiple profiles/);
+    const committed = commitTokenConfiguration(started.operationId, 'update', environment, 'project-two');
+    assert.equal(committed.profile.name, 'project-two');
+    assert.equal(getActiveProfile(environment).name, 'project-two');
+    assert.throws(() => getProfile('rotated-profile', environment), /profile not found/);
+  } finally {
+    server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
