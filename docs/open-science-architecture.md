@@ -6,6 +6,25 @@ This document defines the approved architecture for distributing the SLR `/slr` 
 
 The packaging experience follows the useful parts of `ResearchPulse/slr_skill_claude_science`: one `npx github:ResearchPulse/slr_skill_open_science` entrypoint, an installer, project profiles, local review drafts, and an audit trail. The runtime remains Node.js/TypeScript because the backend and current MCP implementation already use that stack.
 
+## Connector split
+
+The package intentionally has two MCP processes with separate responsibilities:
+
+```text
+/slr review, /slr status, /slr tasks
+  -> slr-agent-mcp
+  -> exactly four SLR task tools
+
+/slr config
+  -> slr-config-mcp
+  -> slr_config_profiles
+  -> slr_config_validate
+  -> slr_config_commit
+  -> slr_config_cancel
+```
+
+The config process is local-only. It reads `SLR_AGENT_TOKEN` from the encrypted host Credential binding, stages validation before commit, and writes only local profile/connector state. The review process remains unchanged and the backend repository is not modified.
+
 ## Approved decisions
 
 | Decision | Choice | Rationale |
@@ -204,6 +223,6 @@ Chosen because it preserves the desired user experience while matching the targe
 - [ResearchPulse Claude SLR package](https://github.com/ResearchPulse/slr_skill_claude_science)
 - [MCP TypeScript server SDK](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/server/README.md)
 
-## Next step
+## Implementation status
 
-Create an implementation plan from this design. The plan should be split into package foundation, installer/CLI, Open-Science connector integration, skill migration, safety tests, and tarball/manual acceptance.
+The two-connector implementation, skill migration, safety tests, and tarball smoke checks are part of this repository. The backend remains outside the change scope.

@@ -73,6 +73,30 @@ function runMcp(mcpArgs) {
   });
 }
 
+function runConfigMcp(mcpArgs) {
+  const entrypoint = resolve(packageRoot, 'mcp', 'slr-config-mcp', 'out', 'index.js');
+  if (!existsSync(entrypoint)) {
+    fail('config MCP build is missing. Run npm run compile:config-mcp from the package root first.');
+    return;
+  }
+
+  const child = spawn(process.execPath, [entrypoint, ...mcpArgs], {
+    cwd: packageRoot,
+    env: { ...globalThis.process['env'] },
+    shell: false,
+    stdio: 'inherit',
+  });
+
+  child.once('error', error => fail(`unable to start config MCP server: ${error.message}`));
+  child.once('exit', (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exitCode = code ?? 1;
+  });
+}
+
 async function runCli(cliArgs) {
   const cliPath = pathToFileURL(resolve(packageRoot, 'cli', 'slr.js')).href;
   const cli = await import(cliPath);
@@ -81,6 +105,8 @@ async function runCli(cliArgs) {
 
 if (args[0] === '--mcp' || args[0] === 'mcp') {
   runMcp(args.slice(1));
+} else if (args[0] === '--config-mcp' || args[0] === 'config-mcp') {
+  runConfigMcp(args.slice(1));
 } else {
   runCli(args).catch(error => {
     fail(error instanceof Error ? error.message : 'unexpected installer error');

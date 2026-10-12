@@ -22,6 +22,20 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Quick setup behavior
 
+Current connector model:
+
+- `slr-agent-mcp` is the review connector and exposes only the four business tools.
+- `slr-config-mcp` is a separate local connector used only by `/slr config`.
+- The config connector reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Access token Credential. It never accepts a raw token in chat or as a tool argument.
+
+When setup cannot register the config connector automatically, import this definition manually, bind the Credential named `SLR_AGENT_TOKEN` to it, and reconnect:
+
+```text
+Command: npx
+Arguments: --yes github:ResearchPulse/slr_skill_open_science --config-mcp
+Credential binding: SLR_AGENT_TOKEN
+```
+
 The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, asks only for the project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, creates or updates then enables the Open-Science connector. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
 
 Use `--json` for a non-interactive report. If automatic registration is unavailable, import the generated connector configuration manually. The connector arguments include `--profile <name>`, so the root `--mcp` launcher can load the matching protected local token. After the connector and skill are available, open a new Open-Science conversation and run `/slr setup`; that chat command performs the read-only check and does not collect credentials.
@@ -201,6 +215,8 @@ Package hiện expose đúng bốn tool, không có health/config/helper tool b�
 
 ## In-chat profile configuration
 
-Use `/slr config` when the local project profile or token needs to change. The skill lists safe profiles first, asks the user to choose or create a profile, then passes one pasted token through the host's protected local stdin bridge to the CLI. The CLI validates the token before writing anything. An exact token match offers a profile switch; a matching project ID offers a token update; otherwise the token is saved to the selected profile. The token is never displayed, sent through MCP, or written to connector JSON.
+The in-chat flow uses the separate `slr-config` connector. It calls `slr_config_profiles`, asks the user to choose or create a profile, validates the token from the encrypted `SLR_AGENT_TOKEN` credential with `slr_config_validate`, and commits one selected save/switch/update action with `slr_config_commit`. If the credential is missing, bind it in Connector settings and reconnect; do not paste the token into chat. If the config connector is unavailable, use the terminal CLI flow and do not claim that local configuration changed.
 
-After the single save/switch/update confirmation, the CLI updates the secret-free connector configuration and enables it when the Open-Science CLI is available. Reconnect the connector and run `/slr status`. If the host cannot run the local command bridge, use the terminal package command instead; `/slr config` must not claim success without a local commit.
+Use `/slr config` when the local project profile or token needs to change. The skill lists safe profiles first, asks the user to choose or create a profile, then validates the token from the encrypted `SLR_AGENT_TOKEN` Credential through the config connector. An exact token match offers a profile switch; a matching project ID offers a token update; otherwise the token is saved to the selected profile. The raw token is never displayed, sent through MCP, or written to connector JSON.
+
+After the single save/switch/update confirmation, the config connector updates the secret-free connector configuration and attempts to enable both local connectors when the Open-Science CLI is available. Reconnect the connectors and run `/slr status`. If the config connector is unavailable, use the terminal package command instead; `/slr config` must not claim success without a local commit.

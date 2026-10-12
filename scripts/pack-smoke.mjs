@@ -70,6 +70,29 @@ function runMcpStartupProbe(entrypoint, cwd) {
   }
 }
 
+function runConfigMcpStartupProbe(entrypoint, cwd) {
+  const configRoot = mkdtempSync(join(tmpdir(), 'slr-config-pack-smoke-'));
+  const env = { ...process.env, SLR_CONFIG_DIR: configRoot };
+  delete env.SLR_AGENT_TOKEN;
+  const result = spawnSync(process.execPath, [entrypoint, '--config-mcp'], {
+    cwd,
+    encoding: 'utf8',
+    env,
+    shell: false,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 1_500,
+    windowsHide: true,
+  });
+  const output = String(result.stdout || '') + '\n' + String(result.stderr || '');
+  rmSync(configRoot, { recursive: true, force: true });
+  if (output.includes('Cannot find module') || output.includes('ERR_MODULE_NOT_FOUND')) {
+    throw new Error('clean-installed config MCP failed to resolve runtime dependencies: ' + output);
+  }
+  if (!output.includes('SLR config MCP server is running over stdio')) {
+    throw new Error('clean-installed config MCP did not reach stdio startup: ' + output);
+  }
+}
+
 const tempRoot = mkdtempSync(join(tmpdir(), 'slr-open-science-pack-'));
 const cacheRoot = process['env']['PACK_SMOKE_CACHE_PATH'] || join(tempRoot, 'npm-cache');
 mkdirSync(cacheRoot, { recursive: true });
@@ -98,15 +121,17 @@ try {
   const installedRoot = join(installRoot, 'node_modules', 'slr-skill-open-science');
   const installedBin = join(installedRoot, 'bin', 'install.js');
   const installedServer = join(installedRoot, 'mcp', 'slr-agent-mcp', 'out', 'server.js');
+  const installedConfigServer = join(installedRoot, 'mcp', 'slr-config-mcp', 'out', 'index.js');
 
-  if (!existsSync(installedBin) || !existsSync(installedServer)) {
-    throw new Error('clean install is missing the root bin or compiled MCP server');
+  if (!existsSync(installedBin) || !existsSync(installedServer) || !existsSync(installedConfigServer)) {
+    throw new Error('clean install is missing the root bin or compiled MCP servers');
   }
 
   run(process.execPath, [installedBin, 'doctor', '--json'], packageRoot);
   runExpectedFailure(process.execPath, [installedBin, '--token', 'pack-smoke-secret'], packageRoot, 'pack-smoke-secret');
   runExpectedFailure(process.execPath, [installedBin, 'unknown-pack-smoke-secret'], packageRoot, 'unknown-pack-smoke-secret');
   runMcpStartupProbe(installedBin, packageRoot);
+  runConfigMcpStartupProbe(installedBin, packageRoot);
   run(process.execPath, [
     '--input-type=module',
     '-e',

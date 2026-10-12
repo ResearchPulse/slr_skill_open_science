@@ -14,20 +14,26 @@
     "skill",
     "mcp/slr-agent-mcp/out",
     "mcp/slr-agent-mcp/package.json",
+    "mcp/slr-config-mcp/out",
+    "mcp/slr-config-mcp/package.json",
     "README.md"
   ],
   "workspaces": [
-    "mcp/slr-agent-mcp"
+    "mcp/slr-agent-mcp",
+    "mcp/slr-config-mcp"
   ],
   "scripts": {
     "compile:mcp": "npm run --workspace slr-agent-mcp compile",
+    "compile:config-mcp": "npm run --workspace slr-config-mcp compile",
     "typecheck:mcp": "npm run --workspace slr-agent-mcp typecheck",
+    "typecheck:config-mcp": "npm run --workspace slr-config-mcp typecheck",
     "test:mcp": "npm run --workspace slr-agent-mcp test",
+    "test:config-mcp": "npm run --workspace slr-config-mcp test",
     "test:harness": "npm run --workspace slr-agent-mcp test:harness",
     "test:cli": "node --test tests/*.test.mjs",
-    "test": "npm run test:cli && npm run test:mcp",
-    "pack:check": "npm run compile:mcp && node scripts/pack-smoke.mjs",
-    "prepare": "npm run compile:mcp"
+    "test": "npm run test:cli && npm run test:mcp && npm run test:config-mcp",
+    "pack:check": "npm run compile:mcp && npm run compile:config-mcp && node scripts/pack-smoke.mjs",
+    "prepare": "npm run compile:mcp && npm run compile:config-mcp"
   },
   "engines": {
     "node": ">=20"

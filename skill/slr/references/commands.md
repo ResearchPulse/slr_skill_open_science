@@ -90,11 +90,18 @@ SLR setup is incomplete
 
 Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
 
-If the user offers to paste a token outside `/slr config`, decline that path and direct them to the terminal quick setup or the connector's encrypted Access token Credential for `SLR_AGENT_TOKEN`. `/slr config` may pass one pasted token through the host's protected local stdin bridge; never echo or use it in MCP. If the token was exposed outside that path, recommend rotation in the SLR project settings.
+If the user offers to paste a token in chat, decline that path and direct them to the connector's encrypted Access token Credential named `SLR_AGENT_TOKEN` or the terminal CLI fallback. If the token was exposed outside that protected path, recommend rotation in the SLR project settings.
 
 ## Config response
 
-`/slr config` should be concise:
+`/slr config` should use the separate `slr-config` connector and remain concise:
+
+1. Call `slr_config_profiles`.
+2. Ask the user to choose or create a profile.
+3. Call `slr_config_validate`; the connector reads `SLR_AGENT_TOKEN` from the host credential binding.
+4. Present exactly one save, switch, or update choice, then call `slr_config_commit` after the user's choice.
+
+If the config connector is unavailable or returns `CREDENTIAL_MISSING`, explain that the Access token Credential must be bound to `slr-config` and the connector must be reconnected. Never claim a profile changed without a successful commit.
 
 ```text
 SLR profile configured

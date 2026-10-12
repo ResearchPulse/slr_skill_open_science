@@ -12,6 +12,8 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ## Fast setup (default)
 
+Current connector model: setup prepares two local MCP connectors. The review connector is used for the four SLR task tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. Bind that credential to the config connector before using the in-chat configuration flow.
+
 Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores the token in the selected local profile, tests the API, and creates or updates then enables the Open-Science connector. When the Open-Science CLI is installed but its daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows it also checks common per-user install locations and the optional `OPEN_SCIENCE_CLI` path when the CLI is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
 
 The token is stored outside profile metadata under `SLR_CONFIG_DIR` (default `~/.slr`) with restrictive permissions where supported. It is never printed, placed in generated connector JSON, or sent to chat. Use `--json` for a non-interactive report; it never prompts for credentials. If automatic registration is unavailable, import the generated connector configuration manually. After setup, open a new Open-Science conversation and run `/slr setup` for the read-only check.
@@ -26,9 +28,9 @@ npx github:ResearchPulse/slr_skill_open_science --json
 
 After the skill is enabled, `/slr setup` is the quick in-chat setup check. It calls the read-only task listing, reports the connected project and assigned-task state, or shows only the missing connector settings. It never asks for the project token in chat and cannot modify Open-Science connector settings.
 
-Use `/slr config` when you want the in-chat profile/token wizard. It lists safe local profiles, asks you to choose or create one before accepting the project token, validates the token without committing a profile, and suggests exactly one action: switch to an exact-token profile, update a matching project profile, or save to the selected profile. The token is passed only through the host's protected local stdin bridge; it is never sent through MCP, printed, or written to connector JSON. After commit, reconnect the connector and run `/slr status`.
+Use `/slr config` when you want the in-chat profile/token wizard. It lists safe local profiles, asks you to choose or create one, validates the token from the encrypted host credential binding named `SLR_AGENT_TOKEN`, and suggests exactly one action: switch to an exact-token profile, update a matching project profile, or save to the selected profile. The raw token is never sent through MCP, printed, or written to connector JSON. After commit, reconnect the connectors and run `/slr status`.
 
-This in-chat flow requires an Open-Science host that exposes a local command bridge. If the current host cannot run that bridge, `/slr config` must show the terminal fallback and must not claim that the profile or connector changed.
+This in-chat flow requires the separate `slr-config` connector. If it is unavailable or its credential is missing, `/slr config` must show the credential/reconnect or terminal fallback and must not claim that the profile or connector changed.
 
 The equivalent local CLI flow is:
 
@@ -71,6 +73,7 @@ npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review --reg
 
 ## Contents
 
+- `mcp/slr-config-mcp/` — separate local configuration MCP server with exactly four `slr_config_*` tools.
 - `mcp/slr-agent-mcp/` — local TypeScript MCP server, exposing exactly these four tools (no health, config, or helper tools):
   - `list_assigned_tasks`
   - `get_assigned_task`
@@ -97,6 +100,18 @@ npx github:ResearchPulse/slr_skill_open_science --mcp --profile <profile-name>
 ```
 
 The root `--mcp` entrypoint resolves the selected local profile and reads its protected token. When a profile is selected, its API URL is authoritative; `SLR_AGENT_TOKEN` may be supplied as an explicit host-managed override. Without a profile, direct environment values `SLR_API_BASE_URL` and `SLR_AGENT_TOKEN` are required. Optional `SLR_PROFILE_ID`, `SLR_PROJECT_ID`, `SLR_PROJECT_NAME`, and `SLR_API_ALLOWED_HOSTS` provide context and host validation. The root `--mcp` entrypoint forwards stdio to the MCP server without invoking a shell; stdout is reserved for MCP JSON-RPC and diagnostics use stderr.
+
+## Config MCP connector
+
+Use the separate connector for `/slr config`:
+
+```text
+Command: npx
+Arguments: --yes github:ResearchPulse/slr_skill_open_science --config-mcp
+Credential binding: SLR_AGENT_TOKEN
+```
+
+It exposes `slr_config_profiles`, `slr_config_validate`, `slr_config_commit`, and `slr_config_cancel`. It never accepts a raw token in tool arguments. If setup cannot register it automatically, import the generated config connector JSON manually and reconnect it after binding the credential.
 
 ## Local development run
 
