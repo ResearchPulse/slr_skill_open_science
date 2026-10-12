@@ -198,7 +198,7 @@ describe('SLR MCP acceptance harness', () => {
     api = undefined;
   });
 
-  it('runs the four-tool workflow through a real stdio process and fake API', async () => {
+  it('runs the five-tool workflow through a real stdio process and fake API', async () => {
     api = await startHarnessApi();
     const config = buildMcpConfig(api);
     const transport = new StdioClientTransport({
@@ -230,6 +230,7 @@ describe('SLR MCP acceptance harness', () => {
     const tools = await connectedClient.listTools();
     expect(tools.tools.map(tool => tool.name)).toEqual([
       'list_assigned_tasks',
+      'connection_test',
       'get_assigned_task',
       'get_task_fulltext',
       'submit_review_result',

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { installSkill } from '../cli/skill-store.js';
+import { installSkill, removeManagedSkill } from '../cli/skill-store.js';
 import {
   createProfile,
   getActiveProfile,
@@ -143,4 +143,15 @@ test('skill installation is managed and refuses to overwrite an unmanaged target
   mkdirSync(unmanaged, { recursive: true });
   writeFileSync(join(unmanaged, 'SKILL.md'), 'custom\n');
   assert.throws(() => installSkill(packageRoot, unmanaged), /not managed/);
+}));
+
+test('managed skill cleanup removes only the managed target', () => withStore((_environment, root) => {
+  const target = join(root, 'skills', 'slr');
+  installSkill(packageRoot, target);
+  assert.equal(removeManagedSkill(target).status, 'removed');
+  assert.equal(existsSync(target), false);
+
+  const unmanaged = join(root, 'skills', 'unmanaged-cleanup');
+  mkdirSync(unmanaged, { recursive: true });
+  assert.throws(() => removeManagedSkill(unmanaged), /not managed/);
 }));

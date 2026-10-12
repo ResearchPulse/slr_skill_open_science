@@ -9,6 +9,35 @@
 5. Explain the decision in concise evidence-based language.
 6. Add structured `data` only when it helps the project; omit unknown values instead of inventing them.
 
+## Decision rules
+
+Apply these rules in order:
+
+1. Check hard exclusion criteria first. One clear exclusion is enough for `EXCLUDE`,
+   but mention other observed exclusions when relevant.
+2. Check every inclusion criterion and mark it `met`, `not_met`, or `unclear` with
+   evidence. Any clear `not_met` means `EXCLUDE`; all `met` means `INCLUDE`; otherwise
+   use `UNCERTAIN`.
+3. Task instructions override the default rubric when they add or tighten a rule.
+4. When the evidence is between `INCLUDE` and `EXCLUDE`, choose `UNCERTAIN` so a
+   human can resolve the ambiguity.
+
+Common hard-exclusion signals include the wrong population or age group, a non-human
+study when humans are required, the wrong study design, an out-of-range date or
+language, a duplicate publication, or no relevant outcome.
+
+## Confidence and traceability
+
+Use `data.confidence` from 0 to 1: 0.9-1.0 when explicit statements settle every
+criterion, 0.7-0.89 when one criterion relies on a reasonable inference, and
+0.5-0.69 for a judgement call that normally pairs with `UNCERTAIN`. Below 0.5,
+do not use `INCLUDE` or `EXCLUDE`; choose `UNCERTAIN`.
+
+Reasoning should begin with `Decision:`, `Basis:`, and `Key reason:` lines so local
+draft summaries remain useful. Every criterion claim must point to a paper section,
+page, or short passage when the full text provides one. Do not invent numbers or
+quotes.
+
 ## Draft template
 
 ```json

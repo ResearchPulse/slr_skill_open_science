@@ -14,7 +14,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 Strict setup contract: the project token is held only in the encrypted Open-Science Credential `SLR_AGENT_TOKEN`; setup succeeds only after both `slr-default` and `slr-config` are registered and enabled. There is no local token file or manual connector-import fallback.
 
-Current connector model: setup prepares two local MCP connectors. The review connector is used for the four SLR task tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. When the Open-Science CLI is available, setup creates or updates the `SLR_AGENT_TOKEN` Credential and binds it to both connectors automatically.
+Current connector model: setup prepares two local MCP connectors. The review connector is used for the five Claude-compatible SLR task tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. When the Open-Science CLI is available, setup creates or updates the `SLR_AGENT_TOKEN` Credential and binds it to both connectors automatically.
 
 Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores only secret-free profile metadata plus a token fingerprint, tests the API, creates or updates the encrypted `SLR_AGENT_TOKEN` Credential, and creates or updates then enables both Open-Science connectors. When the Open-Science CLI is installed but its daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows it also checks common per-user install locations and the optional `OPEN_SCIENCE_CLI` path when the CLI is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
 
@@ -28,15 +28,15 @@ npx github:ResearchPulse/slr_skill_open_science --json
 
 `setup` also copies the managed skill directory to `~/.agents/skills/slr`. In Open-Science, import that installed directory from Settings → Skills → Import installed skills, then enable `/slr`. Use `--skill-dir PATH` to choose another local import directory. If an unmanaged skill already exists at the target, the command stops instead of overwriting it.
 
-After the skill is enabled, `/slr setup` is the quick in-chat setup check. It calls the read-only task listing, reports the connected project and assigned-task state, or shows only the missing connector settings. It never asks for the project token in chat and cannot modify Open-Science connector settings.
+After the skill is enabled, `/slr setup` is the quick in-chat setup check. It calls the bounded read-only `connection_test`, reports the connected project and assigned-task state, or shows only the missing connector settings. It never asks for the project token in chat and cannot modify Open-Science connector settings.
 
-Use `/slr config` when you want the in-chat profile/token wizard. It lists safe local profiles, asks you to choose or create one, validates the token from the encrypted host credential binding named `SLR_AGENT_TOKEN`, and suggests exactly one action: switch to an exact-token profile, update a matching project profile, or save to the selected profile. The raw token is never sent through MCP, printed, or written to connector JSON. After commit, reconnect the connectors and run `/slr status`.
+Use `/slr config` for the profile-first wizard. For the quick path, use `/slr config token <TOKEN>`: the config connector validates the supplied token, automatically binds the encrypted `SLR_AGENT_TOKEN` credential, chooses switch/update/save from the project match, updates the secret-free profile, and enables both connectors. The token is never echoed, returned, or written to profile metadata or connector JSON. After success, run `/slr status`.
 
 This in-chat flow requires the separate `slr-config` connector. If it is unavailable or its credential is missing, `/slr config` must report the missing capability, ask the user to reconnect/start a new conversation, and must not claim that the profile or connector changed.
 
 The staged operation is kept in memory inside the config-MCP process, expires after ten minutes, and is committed only after both connectors are enabled.
 
-There is no terminal/manual equivalent for the token wizard. Profile changes are intentionally available only through the connected `slr-config` MCP connector, so a missing or disconnected connector is a hard failure rather than a fallback path. The pending operation expires after ten minutes and failed validation does not modify the selected profile.
+There is no terminal/manual fallback for the explicit in-chat token path. Profile changes are available through the connected `slr-config` MCP connector; a missing or disconnected connector is a hard failure. The pending operation expires after ten minutes and failed validation does not modify the selected profile.
 
 Use `doctor` to inspect packaged assets and Open-Science CLI availability:
 
@@ -68,9 +68,10 @@ Setup uses the local Open-Science CLI, starts its daemon if needed, binds `SLR_A
 
 ## Contents
 
-- `mcp/slr-config-mcp/` — separate local configuration MCP server with exactly four `slr_config_*` tools.
-- `mcp/slr-agent-mcp/` — local TypeScript MCP server, exposing exactly these four tools (no health, config, or helper tools):
+- `mcp/slr-config-mcp/` — separate local configuration MCP server with five narrowly scoped `slr_config_*` tools.
+- `mcp/slr-agent-mcp/` — local TypeScript MCP server, exposing the five Claude-compatible review tools:
   - `list_assigned_tasks`
+  - `connection_test`
   - `get_assigned_task`
   - `get_task_fulltext`
   - `submit_review_result`
@@ -106,7 +107,7 @@ Arguments: --yes github:ResearchPulse/slr_skill_open_science --config-mcp
 Credential binding: SLR_AGENT_TOKEN
 ```
 
-It exposes `slr_config_profiles`, `slr_config_validate`, `slr_config_commit`, and `slr_config_cancel`. It never accepts a raw token in tool arguments. Setup must register and enable it automatically; if it is unavailable, `/slr config` stops with `CONFIG_CONNECTOR_UNAVAILABLE` and asks for reconnect/new conversation.
+It exposes `slr_config_profiles`, `slr_config_validate`, `slr_config_token`, `slr_config_commit`, and `slr_config_cancel`. Only `slr_config_token` accepts a raw token, and only for the explicit `/slr config token <TOKEN>` flow; it validates and binds the token immediately and never returns it. Setup must register and enable the connector automatically; if it is unavailable, the command stops with `CONFIG_CONNECTOR_UNAVAILABLE` and does not claim a configuration change.
 
 ## Local development run
 
@@ -130,4 +131,21 @@ npm run test:harness
 npm test
 ```
 
-The harness checks exact four-tool discovery, bearer propagation, paginated task lookup, `202` full-text processing, declined submission with zero POSTs, digest-bound confirmation, one successful POST, and terminal `409` behavior without retry. `npm test` includes the harness through the MCP workspace test suite. `npm run pack:check` additionally validates a clean packed install; it requires npm registry/cache access for dependency installation.
+The harness checks five-tool discovery including the bounded `connection_test`, bearer propagation, paginated task lookup, `202` full-text processing, declined submission with zero POSTs, digest-bound confirmation, one successful POST, and terminal `409` behavior without retry. `npm test` includes the harness through the MCP workspace test suite. `npm run pack:check` additionally validates a clean packed install; it requires npm registry/cache access for dependency installation.
+
+## Claude-compatible command surface
+
+The package has one canonical `/slr` skill, with the same command vocabulary as
+`slr_skill_claude_science`.
+
+`/slr list` is an alias for `/slr tasks`. Draft workflows support
+`/slr review [N|ids]`, `/slr drafts`, `/slr edit <taskId> <instruction>`,
+`/slr submit [ids]`, and explicit `/slr auto [N]`. Operational commands
+`/slr mcp`, `/slr diag`, and `/slr config show|url|use|test|remove` use safe
+MCP/profile metadata only. Submission always uses the existing one-prompt
+confirmation plus internal digest handshake; no command bypasses it.
+
+The package CLI also accepts `install` as a setup alias, exposes `mcp` for safe
+connector metadata, `doctor` for diagnostics, and `uninstall --yes` for removing
+only the managed skill. Profiles, encrypted credentials, and registered
+connectors are preserved by uninstall so a reinstall can reuse them.

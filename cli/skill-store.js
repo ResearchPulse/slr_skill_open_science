@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -23,4 +23,15 @@ export function installSkill(packageRoot, targetRoot = defaultSkillRoot()) {
   cpSync(sourceRoot, target, { recursive: true, force: true });
   writeFileSync(marker, 'Managed by slr_skill_open_science.\n', { encoding: 'utf8', mode: 0o600 });
   return { status: existed ? 'updated' : 'installed', path: target };
+}
+
+export function removeManagedSkill(targetRoot = defaultSkillRoot()) {
+  const target = resolve(targetRoot);
+  const marker = resolve(target, MARKER);
+  if (!existsSync(target)) return { status: 'missing', path: target };
+  if (!existsSync(marker)) {
+    throw new Error(`skill target exists and is not managed by SLR: ${target}`);
+  }
+  rmSync(target, { recursive: true, force: true });
+  return { status: 'removed', path: target };
 }

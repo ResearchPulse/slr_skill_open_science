@@ -16,6 +16,13 @@ test('skill guidance covers safe next actions for each review state', () => {
     '/slr review next',
     '/slr task <taskId>',
     '/slr review <taskId>',
+    '/slr list',
+    '/slr drafts',
+    '/slr edit <taskId> <instruction>',
+    '/slr submit [ids]',
+    '/slr auto [N]',
+    '/slr mcp',
+    'connection_test',
     'upload the PDF',
     'confirm',
     'cancel',
@@ -24,6 +31,31 @@ test('skill guidance covers safe next actions for each review state', () => {
     const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.match(skill, new RegExp(escaped, 'i'));
   }
+});
+
+test('skill guidance keeps the Claude command aliases on the same safety boundary', () => {
+  for (const phrase of [
+    '/slr list',
+    '/slr review [N|ids]',
+    '/slr drafts',
+    '/slr edit <taskId> <instruction>',
+    '/slr submit [ids]',
+    '/slr auto [N]',
+    '/slr mcp',
+    '/slr diag',
+    'digest-bound',
+    'no terminal or direct-API fallback',
+  ]) {
+    assert.match(`${skill}\n${commands}`, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  }
+});
+
+test('skill guidance exposes the explicit token configuration path', () => {
+  assert.match(skill, /\/slr config token <TOKEN>/);
+  assert.match(skill, /slr_config_token/);
+  assert.match(commands, /\/slr config token <TOKEN>/);
+  assert.match(commands, /without a second confirmation/);
+  assert.match(skill, /never repeat, display, summarize, log, persist in profile metadata/i);
 });
 
 test('command references keep pending and unavailable full text fail-closed', () => {
@@ -45,6 +77,12 @@ test('command references keep pending and unavailable full text fail-closed', ()
 });
 
 test('setup and review guidance keep state-dependent actions ordered', () => {
+  const setupStart = commands.indexOf('`/slr setup` must first');
+  const setupEnd = commands.indexOf('When it succeeds', setupStart);
+  const setup = commands.slice(setupStart, setupEnd);
+  assert.match(setup, /connection_test/);
+  assert.doesNotMatch(setup, /list_assigned_tasks/);
+
   const noTaskSetup = commands.slice(commands.indexOf('If `Assigned tasks` is `none`'));
   assert.match(noTaskSetup, /Assign a paper in the SLR web application/);
   assert.doesNotMatch(noTaskSetup, /review next/);

@@ -19,8 +19,9 @@ they want to configure a project token. The requested experience is a fast
 profile-aware setup wizard that lets the user choose or create a profile,
 paste a project token, and finish the local configuration from the SLR skill.
 
-The backend and the public MCP contract are out of scope. The MCP server must
-continue exposing exactly four tools.
+The backend and the review MCP contract are out of scope. The review MCP keeps
+exactly four task tools; the separate config MCP exposes a dedicated token
+configuration operation.
 
 ## Decision
 
@@ -150,9 +151,10 @@ Detailed diagnostics remain available through the root CLI `--json` or
 ## Constraints and safety invariants
 
 - Do not modify the backend, API routes, database schema, or web application.
-- Keep exactly these four MCP tools: `list_assigned_tasks`,
+- Keep exactly these four review MCP tools: `list_assigned_tasks`,
   `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
-- Do not add a `config`, `health`, `connection_test`, or token MCP tool.
+- Do not add arbitrary health or command-execution tools; token configuration is
+  limited to `slr_config_token` in the separate config MCP.
 - Do not pass a raw token in command-line arguments or generated connector
   JSON; use a non-echoing local input path.
 - Never print, echo, log, or include the token in skill text, chat output,
@@ -188,9 +190,8 @@ Detailed diagnostics remain available through the root CLI `--json` or
 
 ### Add a fifth MCP configuration tool
 
-Rejected. It violates the established four-tool contract, exposes token
-mutation inside the runtime server, and still cannot reliably update the host
-connector that launched the server.
+Accepted for the separate config MCP. It keeps token mutation out of the review
+MCP and reuses the host credential and connector-registration boundary.
 
 ### Keep `/slr config` read-only and require the root `npx` installer
 
@@ -218,3 +219,9 @@ fall back to the existing root `npx` setup command rather than pretending that
 - New backend endpoints or project-token semantics.
 - Automatic paper assignment, PDF retrieval, or review submission changes.
 - Changes to the existing digest-bound review confirmation flow.
+# Superseded note
+
+The four-tool review-MCP constraint in this earlier decision is superseded by the
+Claude/Open-Science unification plan. The current review connector adds the bounded
+read-only `connection_test` tool; configuration tools remain in the separate
+`slr-config` connector and the token/credential safety rules below still apply.

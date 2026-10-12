@@ -14,7 +14,7 @@ import {
   updateProfile,
   useProfile,
 } from './profile-store.js';
-import { installSkill } from './skill-store.js';
+import { defaultSkillRoot, installSkill, removeManagedSkill } from './skill-store.js';
 import {
   prepareProfile,
   testProfileConnection,
@@ -460,12 +460,15 @@ Usage:
 
 Commands:
   setup     Interactive setup: copy skill, save URL/token, test API, register MCP
+  install   Alias for setup
   profile   Manage project profiles (create, list, use, inspect, remove)
   workspace Initialize or inspect the local review workspace
   skill     Install or update the /slr skill for Open-Science import
   config    Choose a profile and configure its project token
+  mcp       Show safe connector metadata for the active profile
   doctor    Check package assets, profiles, and Open-Science CLI availability
-  update    Show update guidance without changing existing profiles
+  update    Re-run the setup/update flow while preserving existing profile metadata
+  uninstall Remove the managed /slr skill (use --yes; profiles and credentials stay)
   help      Show this help
 
 In-chat /slr commands (after the skill is imported):
@@ -491,7 +494,44 @@ Credentials:
   Setup asks for the token with hidden terminal input, binds it to the
   Open-Science credential named SLR_AGENT_TOKEN, and never stores it locally.
   The config MCP validates and commits profile changes inside one connected
-  session; tokens never appear in tool arguments or results.`);
+  session; tokens never appear in profile metadata or connector JSON.`);
+}
+
+function runMcpCommand(args, asJson, report) {
+  const profile = selectedProfile(args);
+  const value = {
+    command: 'mcp',
+    openScienceCli: report.openScienceCli,
+    profile: profile ? {
+      name: profile.name,
+      projectId: profile.projectId,
+      projectName: profile.projectName,
+      credentialId: profile.credentialId,
+      connectorId: profile.connectorId,
+      connectorName: profile.connectorName,
+    } : null,
+    reviewConnector: profile ? connectorConfig(profile) : null,
+    configConnector: configConnectorConfig(profile?.credentialId),
+    note: 'Connector metadata only; tokens are stored by Open-Science credentials and are never printed.',
+  };
+  printValue(value, asJson);
+}
+
+function runUninstallCommand(args, asJson) {
+  if (!hasFlag(args, '--yes') && !hasFlag(args, '-y')) {
+    throw new Error('uninstall requires --yes (profile metadata and credentials are preserved by default)');
+  }
+  const skill = removeManagedSkill(flagValue(args, '--skill-dir') || defaultSkillRoot());
+  const value = {
+    command: 'uninstall',
+    skill,
+    profilesPreserved: true,
+    credentialsPreserved: true,
+    connectorsPreserved: true,
+    note: 'Remove the SLR connectors from Open-Science Settings separately if they are no longer needed.',
+  };
+  if (asJson) printValue(value, true);
+  else console.log('SLR skill removed: ' + skill.path + '\nProfiles and Open-Science credentials were preserved.');
 }
 
 function printSetup(report, asJson, setup = {}) {
@@ -628,7 +668,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
     return;
   }
 
-  if (command === 'setup') {
+  if (command === 'setup' || command === 'install' || command === 'update') {
     const profileStoreSnapshot = captureProfileStore(process.env);
     try {
       const options = profileOptions(args);
@@ -723,6 +763,11 @@ export async function main(args = process.argv.slice(2), options = {}) {
     return;
   }
 
+  if (command === 'mcp') {
+    runMcpCommand(args, asJson, report);
+    return;
+  }
+
   if (command === 'doctor') {
     const activeProfile = getActiveProfile();
     const profileReport = {
@@ -735,8 +780,8 @@ export async function main(args = process.argv.slice(2), options = {}) {
     return;
   }
 
-  if (command === 'update') {
-    console.log('Update is non-destructive. Re-run the GitHub package reference, then review the generated setup preview before changing connector state.');
+  if (command === 'uninstall' || command === 'remove') {
+    runUninstallCommand(args, asJson);
     return;
   }
 

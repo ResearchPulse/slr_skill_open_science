@@ -13,7 +13,7 @@ The package intentionally has two MCP processes with separate responsibilities:
 ```text
 /slr review, /slr status, /slr tasks
   -> slr-agent-mcp
-  -> exactly four SLR task tools
+  -> five Claude-compatible SLR task tools
 
 /slr config
   -> slr-config-mcp
@@ -31,7 +31,7 @@ The config process is local-only. It reads `SLR_AGENT_TOKEN` from the encrypted 
 | --- | --- | --- |
 | Distribution | GitHub-installable npm package with an `npx` installer | Reproduces the simple Claude-style onboarding flow |
 | MCP runtime | Node.js + TypeScript | Matches the backend, Windows environment, and validated MCP SDK implementation |
-| MCP surface | Exactly four tools | Preserves the API contract and avoids accidental extra capabilities |
+| MCP surface | Five bounded review tools | Matches the Claude connector while keeping config tools separate |
 | Host | Open-Science local connector | Open-Science manages local connectors, skills, permissions, and credentials |
 | Profiles | Multi-project profiles | A user can manage multiple SLR projects without mixing tokens |
 | Drafts | Local `paper-review/` workspace | Keeps draft/edit/submit workflow auditable and recoverable |
@@ -43,14 +43,14 @@ The config process is local-only. It reads `SLR_AGENT_TOKEN` from the encrypted 
 - Install or update the skill and connector with one `npx github:ResearchPulse/slr_skill_open_science` command.
 - Automatically register and enable both Open-Science local connectors when the Open-Science CLI is available.
 - Fail closed when connector registration or credential binding is unavailable; no manual connector-import path is supported.
-- Expose only `list_assigned_tasks`, `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
-- Support `/slr setup`, `/slr status`, `/slr list`, `/slr review`, `/slr drafts`, `/slr config`, and `/slr help`; `doctor` remains a root CLI command.
+- Expose only `list_assigned_tasks`, `connection_test`, `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
+- Support the Claude-compatible `/slr` command surface: setup, status, list/tasks, task, fulltext, review, drafts, edit, submit, auto, mcp, diag, config subcommands, and help; `doctor` remains a root CLI command.
 - Preserve the project-scoped bearer-token API contract without changing backend routes.
 - Keep the project token out of prompts, skill text, drafts, audit records, and normal tool results.
 
 ## Non-goals
 
-- Adding a fifth MCP `connection_test` tool.
+- Adding direct-API or arbitrary-shell fallback paths.
 - Replacing the existing SLR agent API or duplicating backend business logic.
 - Supporting batch submission without an explicit user command and per-result safety checks.
 - Requiring Python for installation or runtime.
@@ -165,9 +165,10 @@ The raw project token is never stored in Git, the skill, review drafts, `audit.j
 The public MCP tool names remain:
 
 1. `list_assigned_tasks`
-2. `get_assigned_task`
-3. `get_task_fulltext`
-4. `submit_review_result`
+2. `connection_test`
+3. `get_assigned_task`
+4. `get_task_fulltext`
+5. `submit_review_result`
 
 `/slr status`, `doctor`, profile management, and audit inspection are CLI/skill behavior, not additional MCP tools. This keeps the connector compatible with the existing API contract and prevents tool sprawl.
 
@@ -177,7 +178,7 @@ The public MCP tool names remain:
 
 Python stdlib CLI/MCP, its own profile/token store, and five MCP tools.
 
-Rejected because it introduces Python as a required runtime, duplicates Open-Science credential management, and violates the exact-four-tools requirement.
+Rejected because it introduces Python as a required runtime and duplicates Open-Science credential management; the bounded `connection_test` capability is ported separately in the canonical Node/TypeScript server.
 
 ### Minimal current implementation
 
@@ -187,14 +188,14 @@ Rejected because it lacks the one-command installer, profiles, local drafts, aud
 
 ### Approved hybrid
 
-Claude-style installer/CLI/profile/draft experience, Node/TypeScript runtime, four MCP tools, and Open-Science-native connector/credential integration when available.
+Claude-style installer/CLI/profile/draft experience, Node/TypeScript runtime, five MCP tools, and Open-Science-native connector/credential integration when available.
 
 Chosen because it preserves the desired user experience while matching the target host and existing codebase.
 
 ## Acceptance criteria
 
 - `npx github:ResearchPulse/slr_skill_open_science` installs or updates the skill and produces a usable connector configuration.
-- A registered connector starts without Python and discovers exactly four tools.
+- A registered connector starts without Python and discovers five bounded tools.
 - `/slr status` works through `list_assigned_tasks`.
 - Profile switching never mixes project tokens and visibly identifies the active project.
 - Drafts can be reviewed/edited locally and audit records contain no raw token.

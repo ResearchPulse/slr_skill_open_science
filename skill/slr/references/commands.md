@@ -17,6 +17,22 @@ SLR review menu
 Use the numbered choices as the normal command menu when the host does not provide command buttons.
 `/slr help` must render this menu even when the host does not provide command buttons.
 
+## Claude-compatible aliases
+
+The Open-Science skill keeps the Claude command vocabulary:
+
+| Command | Behavior |
+|---|---|
+| `/slr list` | Alias for `/slr tasks` |
+| `/slr review [N|ids]` | Create drafts for eligible assigned tasks; never submit implicitly |
+| `/slr drafts` | Show local drafts only |
+| `/slr edit <taskId> <instruction>` | Revise a local draft and show the exact new payload |
+| `/slr submit [ids]` | Confirm a selected draft batch once, then use the digest-bound MCP write |
+| `/slr auto [N]` | Explicit opt-in batch review and submission with one confirmation |
+| `/slr mcp` | Run the bounded `connection_test` health check |
+| `/slr diag` | Show safe MCP/profile diagnostics; no terminal or direct-API fallback |
+| `/slr config show|url|use|test|remove` | Use the safe config connector operations |
+
 ## Suggested next actions
 
 Append one concise block to command responses. These are guidance only; they do not call tools automatically.
@@ -38,7 +54,9 @@ Use these state-specific variants:
 | Full text is unavailable | Upload the paper PDF in the SLR web app, then retry `/slr task <taskId>` |
 | Exact review draft is displayed | Reply `confirm` once or `cancel`; the digest call is handled automatically |
 
-Do not suggest `/slr review` for unavailable or pending full text. Do not suggest a submit command; submission is only the final confirmation-gated step inside `/slr review`.
+Do not suggest `/slr review` for unavailable or pending full text. Never suggest
+`/slr submit` or `/slr auto` unless the user explicitly asks for that workflow.
+Both still require the same confirmation-gated MCP write.
 
 ## Review confirmation response
 
@@ -61,7 +79,7 @@ Suggested next actions:
 
 ## Quick setup response
 
-`/slr setup` must first perform exactly one read-only connection check using `list_assigned_tasks` with `limit: 1`. It does not install a package, change connector settings, or call a write tool.
+`/slr setup` must first perform exactly one bounded read-only connection check using `connection_test`. It does not install a package, change connector settings, or call a write tool.
 
 When it succeeds, show:
 
@@ -87,16 +105,16 @@ Reconnect the SLR review connector, then run /slr setup again.
 
 Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
 
-If the user offers to paste a token in chat, decline that path and direct them to the connector's encrypted Access token Credential named `SLR_AGENT_TOKEN`. If the token was exposed outside that protected path, recommend rotation in the SLR project settings.
+If the user uses `/slr config token <TOKEN>`, pass the token only to `slr_config_token`; never echo it, summarize it, put it in a draft, or return it in a tool result. If the token was exposed outside this internal command flow, recommend rotation in the SLR project settings.
 
 ## Config response
 
 `/slr config` should use the separate `slr-config` connector and remain concise:
 
 1. Call `slr_config_profiles`.
-2. Ask the user to choose or create a profile.
-3. Call `slr_config_validate`; the connector reads `SLR_AGENT_TOKEN` from the host credential binding.
-4. Present exactly one save, switch, or update choice, then call `slr_config_commit` after the user's choice.
+2. For plain `/slr config`, ask the user to choose or create a profile, then call `slr_config_validate`; the connector reads `SLR_AGENT_TOKEN` from the host credential binding.
+3. For `/slr config token <TOKEN>`, call `slr_config_token` directly. It validates first, binds the encrypted credential, updates the profile, and enables both connectors without a second confirmation.
+4. If `slr_config_token` reports multiple matching profiles, ask only for the safe profile name and retry with `profileName`; do not repeat the token in the response.
 
 If the config connector is unavailable or returns `CREDENTIAL_MISSING`, report `CONFIG_CONNECTOR_UNAVAILABLE` or the credential error, ask the user to reconnect the connector or start a new conversation, and never claim a profile changed without a successful commit.
 
@@ -111,7 +129,7 @@ Suggested next actions:
 - /slr status — verify the read-only connection
 ```
 
-When a token matches another local profile, show one choice only: `Token belongs to profile <name>. Switch to it?` If multiple safe profiles match, ask the user to choose a profile name before committing. For a matching project with a rotated token, ask whether to update that profile. Do not display the token or expose the pending operation secret. Report `reconnect required` until `/slr status` succeeds after the connector restart.
+For plain `/slr config`, when a token matches another local profile, show one choice only: `Token belongs to profile <name>. Switch to it?` The explicit `/slr config token <TOKEN>` command is itself the user's confirmation and applies an unambiguous switch/update/save without a second prompt. If multiple safe profiles match, ask the user to choose a profile name and retry. Do not display the token or expose the pending operation secret. Report `reconnect required` until `/slr status` succeeds after the connector restart.
 
 ## Status response
 

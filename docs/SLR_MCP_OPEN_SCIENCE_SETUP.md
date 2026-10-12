@@ -24,9 +24,9 @@ npx github:ResearchPulse/slr_skill_open_science
 
 Current connector model:
 
-- `slr-agent-mcp` is the review connector and exposes only the four business tools.
+- `slr-agent-mcp` is the review connector and exposes the five Claude-compatible business tools, including bounded `connection_test`.
 - `slr-config-mcp` is a separate local connector used only by `/slr config`.
-- The config connector reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Access token Credential. It never accepts a raw token in chat or as a tool argument.
+- The config connector reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Access token Credential. Only the explicit `/slr config token <TOKEN>` operation accepts a token argument; it validates and binds it immediately and never returns it.
 
 The installer registers both connectors automatically. If registration or credential binding fails, setup exits non-zero and the connectors must be reconnected after the failure is fixed; there is no manual-import fallback.
 
@@ -198,17 +198,18 @@ npm run compile
 npm pack --dry-run
 ```
 
-Package hiện expose đúng bốn tool, không có health/config/helper tool bổ sung:
+Package hiện expose năm tool review tương thích Claude, trong đó `connection_test` chỉ thực hiện một read-only check có giới hạn:
 
 - `list_assigned_tasks`
+- `connection_test`
 - `get_assigned_task`
 - `get_task_fulltext`
 - `submit_review_result`
 
 ## In-chat profile configuration
 
-The in-chat flow uses the separate `slr-config` connector. It calls `slr_config_profiles`, asks the user to choose or create a profile, validates the token from the encrypted `SLR_AGENT_TOKEN` credential with `slr_config_validate`, and commits one selected save/switch/update action with `slr_config_commit`. If the credential is missing, bind it in Connector settings and reconnect; do not paste the token into chat. There is no terminal/manual fallback: if the config connector is unavailable, the operation stops and must not claim that local configuration changed.
+The in-chat flow uses the separate `slr-config` connector. Plain `/slr config` calls `slr_config_profiles`, asks the user to choose/create a profile, then uses the credential-bound `slr_config_validate` and `slr_config_commit` flow. The quick path `/slr config token <TOKEN>` calls `slr_config_token`, validates before mutation, binds the encrypted `SLR_AGENT_TOKEN` credential, and updates/enables both connectors automatically. The token is never echoed or returned. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
 
-Use `/slr config` when the local project profile or token needs to change. The skill lists safe profiles first, asks the user to choose or create a profile, then validates the token from the encrypted `SLR_AGENT_TOKEN` Credential through the config connector. An exact token match offers a profile switch; a matching project ID offers a token update; otherwise the token is saved to the selected profile. The raw token is never displayed, sent through MCP, or written to connector JSON.
+Use `/slr config` when the local project profile needs to change, or use `/slr config token <TOKEN>` for the quick token path. An exact token match switches, a matching project ID updates, and otherwise the token is saved to the selected profile. The raw token is never displayed, returned by MCP, or written to connector JSON.
 
 After the single save/switch/update confirmation, the config connector updates the secret-free connector configuration and enables both local connectors. Reconnect the connectors and run `/slr status`. If either connector cannot be enabled, the commit rolls back and `/slr config` reports failure; it never falls back to a terminal package command or claims success without the connector commit.

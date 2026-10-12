@@ -36,7 +36,7 @@ function reviewArguments(confirmation?: { confirm: boolean; digest: string }): R
 }
 
 describe('SLR MCP server', () => {
-  it('exposes exactly the four contract tools', async () => {
+  it('exposes the five Claude-compatible contract tools', async () => {
     const server = createServer(config);
     const client = new Client({ name: 'test-client', version: '1.0.0' });
     await connectPair(client, server);
@@ -44,11 +44,37 @@ describe('SLR MCP server', () => {
     const result = await client.listTools();
     expect(result.tools.map(tool => tool.name)).toEqual([
       'list_assigned_tasks',
+      'connection_test',
       'get_assigned_task',
       'get_task_fulltext',
       'submit_review_result',
     ]);
 
+    await client.close();
+    await server.close();
+  });
+
+  it('runs connection_test as a bounded read-only health check', async () => {
+    const fetchFunction: typeof fetch = async () => new Response(JSON.stringify({
+      success: true,
+      data: {
+        project: { id: 'project-1', name: 'Test project' },
+        items: [{ id: 'task-1', status: 'ASSIGNED' }],
+        nextCursor: null,
+        hasMore: false,
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const server = createServer(config, new AgentApiClient(config, fetchFunction));
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await connectPair(client, server);
+
+    const result = await client.callTool({ name: 'connection_test', arguments: {} });
+    expect(result.isError).not.toBe(true);
+    const text = result.content.find((item) => item.type === 'text')?.text ?? '';
+    const payload = JSON.parse(text) as { connected: boolean; assignedTasksVisible: boolean };
+    expect(payload.connected).toBe(true);
+    expect(payload.assignedTasksVisible).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(config.agentToken);
     await client.close();
     await server.close();
   });

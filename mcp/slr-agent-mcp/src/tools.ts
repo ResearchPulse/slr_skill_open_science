@@ -8,6 +8,7 @@ import {
   submitReviewResultSchema,
   taskIdSchema,
 } from './schemas.js';
+import * as z from 'zod/v4';
 import type { SubmitReviewInput } from './types.js';
 
 function jsonResult(value: unknown, secret: string): ToolTextResult {
@@ -66,6 +67,31 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     async ({ limit, cursor }): Promise<ToolTextResult> => {
       try {
         return jsonResult(await client.listAssignedTasks(limit, cursor), config.agentToken);
+      } catch (error) {
+        return toolError(error, config.agentToken);
+      }
+    },
+  );
+
+  server.registerTool(
+    'connection_test',
+    {
+      title: 'Test SLR API Connection',
+      description: 'Check the project-scoped connector with one bounded read-only task request. Returns project metadata and whether assigned tasks are visible.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (): Promise<ToolTextResult> => {
+      try {
+        const page = await client.listAssignedTasks(1);
+        return jsonResult({
+          connected: true,
+          project: page.project?.name,
+          projectId: page.project?.id,
+          assignedTasksVisible: page.items.length > 0,
+          sampleCount: page.items.length,
+          hasMore: page.hasMore,
+        }, config.agentToken);
       } catch (error) {
         return toolError(error, config.agentToken);
       }

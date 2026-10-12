@@ -38,6 +38,7 @@ The process communicates over stdio. Protocol messages use stdout; diagnostics u
 ## Exposed tools
 
 - `list_assigned_tasks`
+- `connection_test`
 - `get_assigned_task`
 - `get_task_fulltext`
 - `submit_review_result`
