@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createProfile, getActiveProfile, getProfile, saveProfileToken, updateProfile } from '../cli/profile-store.js';
+import { createProfile, getActiveProfile, getProfile, saveProfileToken, tokenFingerprint, updateProfile } from '../cli/profile-store.js';
 import {
   beginTokenConfiguration,
   commitTokenConfiguration,
@@ -14,8 +14,8 @@ import {
 import {
   ensureOpenScienceCredential,
   ensureOpenScienceDaemon,
+  registerConfigConnector,
   registerConnector,
-  writeConnectorConfig,
 } from '../cli/slr.js';
 
 const daemonAlreadyReady = () => ({ ready: true, started: false });
@@ -38,38 +38,18 @@ test('new non-interactive profiles use the production API default', async () => 
   }
 });
 
-test('profile setup loads a local token and tests the read-only task endpoint', async () => {
+test('profile setup never loads a local token', async () => {
   const root = mkdtempSync(join(tmpdir(), 'slr-setup-test-'));
   const environment = { SLR_CONFIG_DIR: root };
-  const server = createServer((request, response) => {
-    assert.equal(request.url, '/api/agent/v1/tasks?limit=1');
-    assert.equal(request.headers.authorization, 'Bearer slrp_test_secret');
-    response.setHeader('content-type', 'application/json');
-    response.end(JSON.stringify({
-      success: true,
-      data: { project: { id: 'project-1', name: 'Demo project' }, items: [], hasMore: false },
-    }));
-  });
   try {
-    const port = await listen(server);
-    const baseUrl = `http://127.0.0.1:${port}/api`;
+    const baseUrl = 'http://127.0.0.1:3000/api';
     const created = createProfile({ name: 'demo', apiBaseUrl: baseUrl }, environment);
-    saveProfileToken(created.name, 'slrp_test_secret', environment);
+    assert.throws(() => saveProfileToken(created.name, 'slrp_test_secret', environment), /local token storage is disabled/);
 
     const setup = await prepareProfile({ name: 'demo', interactive: false, environment });
     assert.equal(setup.profile.name, 'demo');
-    assert.equal(setup.token, 'slrp_test_secret');
-    const connection = await testProfileConnection(setup.profile, setup.token);
-    assert.deepEqual(connection, {
-      connected: true,
-      status: 200,
-      projectId: 'project-1',
-      projectName: 'Demo project',
-      assignedTasks: 0,
-      hasMore: false,
-    });
+    assert.equal(setup.token, null);
   } finally {
-    server.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -80,37 +60,20 @@ test('setup connection failures never include the token in the result', async ()
   assert.equal(JSON.stringify(connection).includes('slrp_private_secret'), false);
 });
 
-test('manual connector config is profile-aware and secret-free', () => {
-  const root = mkdtempSync(join(tmpdir(), 'slr-config-test-'));
-  const environment = { SLR_CONFIG_DIR: root };
-  try {
-    const profile = createProfile({ name: 'manual', apiBaseUrl: 'http://127.0.0.1:3000/api' }, environment);
-    saveProfileToken(profile.name, 'slrp_manual_secret', environment);
-    const path = writeConnectorConfig(profile, environment);
-    const config = JSON.parse(readFileSync(path, 'utf8'));
-    assert.deepEqual(config.args, ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', 'manual']);
-    assert.equal(JSON.stringify(config).includes('slrp_manual_secret'), false);
-    assert.equal('env' in config, false);
-    assert.equal('envCredentialIds' in config, false);
-    assert.equal('requiredCredentialEnvironment' in config, false);
-    assert.equal('note' in config, false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test('connector registration enables the connector after adding it', () => {
   const calls = [];
   const profile = {
     name: 'default',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     connectorName: 'slr-default',
+    credentialId: 'credential-slr',
   };
   const report = {
     openScienceCli: { available: true, executable: 'open-science' },
   };
   const run = (executable, args, input) => {
     calls.push({ executable, args, input });
+    if (args[1] === 'list') return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [] }) };
     return args[1] === 'add'
       ? { status: 0, error: undefined, stdout: JSON.stringify({ id: 'connector-123' }) }
       : { status: 0, error: undefined, stdout: '' };
@@ -179,7 +142,7 @@ test('Open-Science credential binding updates an existing SLR credential without
       return {
         status: 0,
         error: undefined,
-        stdout: JSON.stringify({ credentials: [{ id: 'credential-existing', displayName: 'SLR project token', kind: 'token' }] }),
+        stdout: JSON.stringify({ credentials: [{ id: 'credential-existing', displayName: 'SLR_AGENT_TOKEN', kind: 'token' }] }),
       };
     }
     return { status: 0, error: undefined, stdout: '' };
@@ -204,12 +167,36 @@ test('Open-Science credential binding updates an existing SLR credential without
   });
 });
 
+test('Open-Science credential binding never repurposes an unrelated token credential', () => {
+  const calls = [];
+  const report = { openScienceCli: { available: true, executable: 'open-science' } };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[0] === 'credential' && args[1] === 'list') {
+      return {
+        status: 0,
+        error: undefined,
+        stdout: JSON.stringify({ credentials: [{ id: 'credential-unrelated', displayName: 'Other service', kind: 'token' }] }),
+      };
+    }
+    return { status: 0, error: undefined, stdout: JSON.stringify({ id: 'credential-slr' }) };
+  };
+
+  const result = ensureOpenScienceCredential('slrp_new_secret', report, run, daemonAlreadyReady);
+  assert.equal(result.credentialId, 'credential-slr');
+  assert.deepEqual(calls.map(call => call.args), [
+    ['credential', 'list', '--json'],
+    ['credential', 'add', '--json'],
+  ]);
+});
+
 test('connector registration updates an existing connector instead of adding a duplicate', () => {
   const calls = [];
   const profile = {
     name: 'default',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     connectorName: 'slr-default',
+    credentialId: 'credential-slr',
   };
   const report = {
     openScienceCli: { available: true, executable: 'open-science' },
@@ -217,7 +204,7 @@ test('connector registration updates an existing connector instead of adding a d
   const run = (executable, args, input) => {
     calls.push({ executable, args, input });
     if (args[1] === 'list') {
-      return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [{ id: 'connector-existing', name: 'slr-default' }] }) };
+      return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [{ id: 'connector-existing', name: 'slr-default', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', 'default'] }] }) };
     }
     return { status: 0, error: undefined, stdout: '' };
   };
@@ -235,12 +222,40 @@ test('connector registration updates an existing connector instead of adding a d
   ]);
 });
 
+test('connector registration does not trust a foreign connector with the same name', () => {
+  const calls = [];
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
+    connectorName: 'slr-default',
+    credentialId: 'credential-slr',
+  };
+  const report = { openScienceCli: { available: true, executable: 'open-science' } };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[1] === 'list') {
+      return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [{ id: 'foreign', name: 'slr-default', command: 'other', args: [] }] }) };
+    }
+    if (args[1] === 'add') return { status: 0, error: undefined, stdout: JSON.stringify({ id: 'new-slr' }) };
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
+    registered: true,
+    enabled: true,
+    connector: 'new-slr',
+    updated: false,
+  });
+  assert.equal(calls.some(call => call.args.includes('foreign')), false);
+});
+
 test('connector registration recognizes an existing SLR connector by command signature', () => {
   const calls = [];
   const profile = {
     name: 'default',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     connectorName: 'slr-default',
+    credentialId: 'credential-slr',
   };
   const report = {
     openScienceCli: { available: true, executable: 'open-science' },
@@ -251,7 +266,7 @@ test('connector registration recognizes an existing SLR connector by command sig
       return {
         status: 0,
         error: undefined,
-        stdout: JSON.stringify({ connectors: [{ id: 'legacy-slr', name: 'gpt', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp'] }] }),
+        stdout: JSON.stringify({ connectors: [{ id: 'legacy-slr', name: 'gpt', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', 'default'] }] }),
       };
     }
     return { status: 0, error: undefined, stdout: '' };
@@ -270,12 +285,13 @@ test('connector registration recognizes an existing SLR connector by command sig
   ]);
 });
 
-test('connector registration falls back to updating by stable name when add is rejected', () => {
+test('connector registration fails closed when add is rejected', () => {
   const calls = [];
   const profile = {
     name: 'default',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     connectorName: 'slr-default',
+    credentialId: 'credential-slr',
   };
   const report = {
     openScienceCli: { available: true, executable: 'open-science' },
@@ -288,25 +304,57 @@ test('connector registration falls back to updating by stable name when add is r
   };
 
   assert.deepEqual(registerConnector(profile, report, run, daemonAlreadyReady), {
-    registered: true,
-    enabled: true,
-    connector: 'slr-default',
-    updated: true,
+    registered: false,
+    reason: 'open-science-connector-add-failed',
+    exitCode: 1,
   });
   assert.deepEqual(calls.map(call => call.args), [
     ['connector', 'list', '--json'],
     ['connector', 'add', '--json'],
-    ['connector', 'update', 'slr-default', '--json'],
-    ['connector', 'enable', 'slr-default'],
   ]);
+});
+
+test('connector registration fails closed when connector listing is unavailable or invalid', () => {
+  const profile = {
+    name: 'default',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
+    connectorName: 'slr-default',
+    credentialId: 'credential-slr',
+  };
+  const report = { openScienceCli: { available: true, executable: 'open-science' } };
+  assert.deepEqual(registerConnector(profile, report, (_executable, args) => (
+    args[1] === 'list'
+      ? { status: 1, error: undefined, stdout: '', stderr: JSON.stringify({ error: { code: 'daemon_unavailable' } }) }
+      : { status: 0, error: undefined, stdout: '' }
+  ), daemonAlreadyReady), {
+    registered: false,
+    reason: 'open-science-connector-list-failed:daemon_unavailable',
+    exitCode: 1,
+  });
+  assert.deepEqual(registerConnector(profile, report, (_executable, args) => (
+    args[1] === 'list'
+      ? { status: 0, error: undefined, stdout: 'not-json' }
+      : { status: 0, error: undefined, stdout: '' }
+  ), daemonAlreadyReady), {
+    registered: false,
+    reason: 'open-science-connector-list-failed:invalid_json',
+  });
+});
+
+test('config connector requires the host credential binding', () => {
+  const result = registerConfigConnector(null, { openScienceCli: { available: true, executable: 'open-science' } }, () => {
+    throw new Error('connector command must not run without a credential');
+  }, () => ({ ready: true }));
+  assert.deepEqual(result, { registered: false, reason: 'credential-binding-missing' });
 });
 
 test('connector registration recognizes nested connector configuration output', () => {
   const calls = [];
   const profile = {
     name: 'default',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     connectorName: 'slr-default',
+    credentialId: 'credential-slr',
   };
   const report = {
     openScienceCli: { available: true, executable: 'open-science' },
@@ -317,7 +365,7 @@ test('connector registration recognizes nested connector configuration output', 
       return {
         status: 0,
         error: undefined,
-        stdout: JSON.stringify({ items: [{ id: 'nested-slr', config: { name: 'gpt', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp'] } }] }),
+        stdout: JSON.stringify({ items: [{ id: 'nested-slr', config: { name: 'gpt', command: 'npx', args: ['github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', 'default'] } }] }),
       };
     }
     return { status: 0, error: undefined, stdout: '' };
@@ -339,8 +387,9 @@ test('connector registration recognizes nested connector configuration output', 
 test('connector registration preserves a structured Open-Science error code', () => {
   const profile = {
     name: 'default',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     connectorName: 'slr-default',
+    credentialId: 'credential-slr',
   };
   const report = {
     openScienceCli: { available: true, executable: 'open-science' },
@@ -413,10 +462,10 @@ test('daemon readiness returns a bounded failure when start fails', () => {
   ]);
 });
 
-test('missing Open-Science CLI keeps connector registration as a manual fallback', () => {
+test('missing Open-Science CLI fails closed without a manual connector path', () => {
   let readinessChecked = false;
   const result = registerConnector(
-    { name: 'default', apiBaseUrl: 'https://slr.example.test/api', connectorName: 'slr-default' },
+    { name: 'default', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api', connectorName: 'slr-default', credentialId: 'credential-slr' },
     { openScienceCli: { available: false } },
     () => ({ status: 0, error: undefined, stdout: '' }),
     () => { readinessChecked = true; return { ready: true }; },
@@ -440,9 +489,12 @@ test('config wizard validates before commit and offers an exact-token profile sw
   try {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}/api`;
-    const existing = createProfile({ name: 'existing', apiBaseUrl: baseUrl }, environment);
-    saveProfileToken(existing.name, 'slrp_existing_secret', environment);
-    updateProfile(existing.name, { projectId: 'project-1', projectName: 'Demo project' }, environment);
+    const existing = createProfile({ name: 'existing', apiBaseUrl: baseUrl, credentialId: 'credential-existing' }, environment);
+    updateProfile(existing.name, {
+      projectId: 'project-1',
+      projectName: 'Demo project',
+      credentialFingerprint: tokenFingerprint('slrp_existing_secret'),
+    }, environment);
 
     const started = await beginTokenConfiguration({
       name: 'new-profile',
@@ -456,10 +508,10 @@ test('config wizard validates before commit and offers an exact-token profile sw
     assert.equal(JSON.stringify(started).includes('slrp_existing_secret'), false);
     assert.throws(() => getProfile('new-profile', environment), /profile not found/);
 
-    const committed = commitTokenConfiguration(started.operationId, 'switch', environment);
+    const committed = commitTokenConfiguration(started.operationId, 'switch', environment, undefined, 'credential-existing', tokenFingerprint('slrp_existing_secret'));
     assert.equal(committed.profile.name, 'existing');
     assert.equal(getActiveProfile(environment).name, 'existing');
-    assert.equal(getProfile('existing', environment).hasLocalToken, true);
+    assert.equal(getProfile('existing', environment).hasLocalToken, false);
   } finally {
     server.close();
     rmSync(root, { recursive: true, force: true });
@@ -480,10 +532,8 @@ test('config wizard matches a project and updates the selected profile only afte
   try {
     const port = await listen(server);
     const baseUrl = `http://127.0.0.1:${port}/api`;
-    const existing = createProfile({ name: 'project-two', apiBaseUrl: baseUrl, projectId: 'project-2', projectName: 'Rotated project' }, environment);
-    saveProfileToken(existing.name, 'slrp_old_secret', environment);
-    const duplicate = createProfile({ name: 'project-two-alt', apiBaseUrl: baseUrl, projectId: 'project-2', projectName: 'Rotated project' }, environment);
-    saveProfileToken(duplicate.name, 'slrp_other_secret', environment);
+    const existing = createProfile({ name: 'project-two', apiBaseUrl: baseUrl, projectId: 'project-2', projectName: 'Rotated project', credentialId: 'credential-two' }, environment);
+    const duplicate = createProfile({ name: 'project-two-alt', apiBaseUrl: baseUrl, projectId: 'project-2', projectName: 'Rotated project', credentialId: 'credential-two-alt' }, environment);
 
     const started = await beginTokenConfiguration({
       name: 'rotated-profile',
@@ -496,11 +546,41 @@ test('config wizard matches a project and updates the selected profile only afte
     assert.deepEqual(started.match.profiles.map(profile => profile.name), ['project-two', 'project-two-alt']);
     assert.equal(getProfile('project-two', environment).projectName, 'Rotated project');
 
-    assert.throws(() => commitTokenConfiguration(started.operationId, 'update', environment), /multiple profiles/);
-    const committed = commitTokenConfiguration(started.operationId, 'update', environment, 'project-two');
+    assert.throws(() => commitTokenConfiguration(started.operationId, 'update', environment, undefined, undefined, tokenFingerprint('slrp_rotated_secret')), /multiple profiles/);
+    const committed = commitTokenConfiguration(started.operationId, 'update', environment, 'project-two', 'credential-two', tokenFingerprint('slrp_rotated_secret'));
     assert.equal(committed.profile.name, 'project-two');
     assert.equal(getActiveProfile(environment).name, 'project-two');
     assert.throws(() => getProfile('rotated-profile', environment), /profile not found/);
+  } finally {
+    server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('config wizard rejects a credential change between validation and commit', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'slr-config-credential-binding-test-'));
+  const environment = { SLR_CONFIG_DIR: root };
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ success: true, data: { project: { id: 'project-3', name: 'Binding project' }, items: [] } }));
+  });
+  try {
+    const port = await listen(server);
+    const started = await beginTokenConfiguration({
+      name: 'binding-profile',
+      apiBaseUrl: `http://127.0.0.1:${port}/api`,
+      token: 'slrp_original_secret',
+      environment,
+    });
+    assert.throws(() => commitTokenConfiguration(
+      started.operationId,
+      'save',
+      environment,
+      undefined,
+      'credential-new',
+      tokenFingerprint('slrp_changed_secret'),
+    ), /credential changed/);
+    assert.throws(() => getProfile('binding-profile', environment), /profile not found/);
   } finally {
     server.close();
     rmSync(root, { recursive: true, force: true });

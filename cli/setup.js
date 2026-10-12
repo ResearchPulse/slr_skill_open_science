@@ -1,24 +1,21 @@
 import { createInterface } from 'node:readline';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 import {
   createProfile,
   commitProfileConfiguration,
   findProfilesByToken,
   findProfilesByProjectId,
-  getConfigRoot,
   getActiveProfile,
   getProfile,
-  loadProfileToken,
   normalizeApiBaseUrl,
   normalizeProfileName,
-  saveProfileToken,
+  tokenFingerprint,
   updateProfile,
 } from './profile-store.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_API_BASE_URL = 'https://slr-api.hyperdatalab.org/api';
+const pendingConfigurations = new Map();
 
 function hasInteractiveTerminal() {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -102,24 +99,17 @@ export async function prepareProfile({ name, apiBaseUrl, interactive = hasIntera
 
   profile = profile
     ? updateProfile(profile.name, { apiBaseUrl: url }, environment)
-    : createProfile({ name: profileName, apiBaseUrl: url }, environment);
+    : createProfile({ name: profileName, apiBaseUrl: url, activate: false }, environment);
 
-  const currentToken = loadProfileToken(profile.name, environment);
-  let token = currentToken;
+  let token = null;
   if (interactive) {
-    const entered = await promptHidden('Agent token', Boolean(currentToken));
-    token = entered || currentToken;
-  }
-  if (token && token !== currentToken) {
-    profile = saveProfileToken(profile.name, token, environment);
-  } else {
-    profile = getProfile(profile.name, environment);
+    token = await promptHidden('Agent token', false);
   }
   return { profile, token, skipped: false };
 }
 
 export async function testProfileConnection(profile, token) {
-  if (!token) return { connected: false, code: 'TOKEN_MISSING', message: 'No local token is configured for this profile.' };
+  if (!token) return { connected: false, code: 'TOKEN_MISSING', message: 'No host credential token was supplied for this profile.' };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -174,24 +164,20 @@ export async function testProfileConnection(profile, token) {
 }
 
 const CONFIG_OPERATION_TTL_MS = 10 * 60 * 1000;
+const pendingExpiryTimers = new Map();
 
-function pendingConfigDirectory(environment) {
-  return join(getConfigRoot(environment), 'pending-config');
+function discardPendingConfig(operationId) {
+  pendingConfigurations.delete(operationId);
+  const timer = pendingExpiryTimers.get(operationId);
+  if (timer) clearTimeout(timer);
+  pendingExpiryTimers.delete(operationId);
 }
 
 function pruneExpiredPendingConfigs(environment) {
-  const directory = pendingConfigDirectory(environment);
-  if (!existsSync(directory)) return;
-  for (const entry of readdirSync(directory)) {
-    if (!entry.endsWith('.json')) continue;
-    const operationId = entry.slice(0, -'.json'.length);
-    try {
-      const metadata = JSON.parse(readFileSync(join(directory, entry), 'utf8'));
-      if (!metadata?.expiresAt || Date.parse(metadata.expiresAt) <= Date.now()) {
-        removePendingConfig(operationId, environment);
-      }
-    } catch {
-      removePendingConfig(operationId, environment);
+  void environment;
+  for (const [operationId, pending] of pendingConfigurations.entries()) {
+    if (!pending?.metadata?.expiresAt || Date.parse(pending.metadata.expiresAt) <= Date.now()) {
+      discardPendingConfig(operationId);
     }
   }
 }
@@ -202,52 +188,23 @@ function operationIdFromInput(value) {
   return operationId;
 }
 
-function pendingPaths(operationIdInput, environment) {
-  const operationId = operationIdFromInput(operationIdInput);
-  const directory = pendingConfigDirectory(environment);
-  return {
-    directory,
-    metadata: join(directory, `${operationId}.json`),
-    secret: join(directory, `${operationId}.secret`),
-  };
-}
-
-function writeProtectedFile(path, value) {
-  mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, value, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  try { chmodSync(temporary, 0o600); } catch { /* Windows may not support POSIX modes. */ }
-  try {
-    renameSync(temporary, path);
-    try { chmodSync(path, 0o600); } catch { /* Windows may not support POSIX modes. */ }
-  } finally {
-    if (existsSync(temporary)) unlinkSync(temporary);
-  }
-}
-
 function removePendingConfig(operationIdInput, environment) {
-  const paths = pendingPaths(operationIdInput, environment);
-  for (const path of [paths.metadata, paths.secret]) {
-    if (existsSync(path)) unlinkSync(path);
-  }
+  void environment;
+  discardPendingConfig(operationIdFromInput(operationIdInput));
 }
 
 function readPendingConfig(operationIdInput, environment) {
-  const paths = pendingPaths(operationIdInput, environment);
-  if (!existsSync(paths.metadata) || !existsSync(paths.secret)) throw new Error('configuration operation not found or already completed');
-  let metadata;
-  try {
-    metadata = JSON.parse(readFileSync(paths.metadata, 'utf8'));
-  } catch {
-    throw new Error('configuration operation metadata is invalid');
-  }
+  void environment;
+  const operationId = operationIdFromInput(operationIdInput);
+  const pending = pendingConfigurations.get(operationId);
+  if (!pending) throw new Error('configuration operation not found or already completed');
+  const { metadata, token } = pending;
   if (!metadata?.expiresAt || Date.parse(metadata.expiresAt) <= Date.now()) {
-    removePendingConfig(operationIdInput, environment);
+    discardPendingConfig(operationId);
     throw new Error('configuration operation expired; start /slr config again');
   }
-  const token = readFileSync(paths.secret, 'utf8').trim();
   if (!token) throw new Error('configuration operation has no token');
-  return { metadata, token };
+  return { operationId, metadata, token };
 }
 
 function publicMatch(type, profiles) {
@@ -293,21 +250,21 @@ export async function beginTokenConfiguration({ name, apiBaseUrl, token, environ
       : publicMatch('none', []);
   const operationId = randomUUID();
   const expiresAt = new Date(Date.now() + CONFIG_OPERATION_TTL_MS).toISOString();
-  const paths = pendingPaths(operationId, environment);
-  try {
-    writeProtectedFile(paths.secret, `${candidateToken}\n`);
-    writeProtectedFile(paths.metadata, `${JSON.stringify({
+  pendingConfigurations.set(operationId, {
+    token: candidateToken,
+    metadata: {
       operationId,
       profileName: candidateName,
       apiBaseUrl: candidateUrl,
       expiresAt,
       connection,
       match,
-    }, null, 2)}\n`);
-  } catch (error) {
-    removePendingConfig(operationId, environment);
-    throw error;
-  }
+      tokenFingerprint: tokenFingerprint(candidateToken),
+    },
+  });
+  const expiryTimer = setTimeout(() => discardPendingConfig(operationId), Math.max(1, Date.parse(expiresAt) - Date.now() + 1));
+  expiryTimer.unref?.();
+  pendingExpiryTimers.set(operationId, expiryTimer);
   return {
     ok: true,
     operationId,
@@ -324,8 +281,31 @@ export function cancelTokenConfiguration(operationId, environment = globalThis.p
   return { ok: true, cancelled: operationIdFromInput(operationId) };
 }
 
-export function commitTokenConfiguration(operationId, action, environment = globalThis.process['env'], selectedProfileName = undefined) {
-  const { metadata, token } = readPendingConfig(operationId, environment);
+export function assertTokenConfigurationCredential(
+  operationId,
+  currentTokenFingerprint,
+  environment = globalThis.process['env'],
+) {
+  const pending = readPendingConfig(operationId, environment);
+  if (!currentTokenFingerprint || currentTokenFingerprint !== pending.metadata.tokenFingerprint) {
+    throw new Error('the bound SLR credential changed after validation; validate again before committing');
+  }
+  return { ok: true, operationId: operationIdFromInput(operationId) };
+}
+
+export function commitTokenConfiguration(
+  operationId,
+  action,
+  environment = globalThis.process['env'],
+  selectedProfileName = undefined,
+  credentialId = undefined,
+  currentTokenFingerprint = undefined,
+) {
+  const pending = readPendingConfig(operationId, environment);
+  const { metadata, token } = pending;
+  if (!currentTokenFingerprint || currentTokenFingerprint !== metadata.tokenFingerprint) {
+    throw new Error('the bound SLR credential changed after validation; validate again before committing');
+  }
   const requestedAction = String(action || '').trim().toLowerCase();
   const expectedAction = metadata.match?.type === 'exact'
     ? 'switch'
@@ -354,7 +334,13 @@ export function commitTokenConfiguration(operationId, action, environment = glob
     apiBaseUrl: existingProfile?.apiBaseUrl || metadata.apiBaseUrl,
     projectId: metadata.connection.projectId,
     projectName: metadata.connection.projectName,
-  }, token, environment);
+    credentialId,
+    credentialFingerprint: tokenFingerprint(token),
+  }, environment);
+  return { ok: true, action: requestedAction, operationId, profile, connection: metadata.connection, match: metadata.match };
+}
+
+export function finalizeTokenConfiguration(operationId, environment = globalThis.process['env']) {
   removePendingConfig(operationId, environment);
-  return { ok: true, action: requestedAction, profile, connection: metadata.connection, match: metadata.match };
+  return { ok: true, finalized: operationIdFromInput(operationId) };
 }

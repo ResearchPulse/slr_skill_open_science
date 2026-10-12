@@ -28,6 +28,10 @@ export interface PublicProfile {
 type ProfileStoreApi = {
   listProfiles(environment: ConfigEnvironment): PublicProfile[];
   getActiveProfile(environment: ConfigEnvironment): PublicProfile | null;
+  captureProfileStore(environment: ConfigEnvironment): Record<string, unknown>;
+  restoreProfileStore(snapshot: Record<string, unknown>, environment: ConfigEnvironment): PublicProfile | null;
+  useProfile(name: string, environment: ConfigEnvironment): PublicProfile;
+  tokenFingerprint(value: string): string;
 };
 
 type SetupApi = {
@@ -38,17 +42,20 @@ type SetupApi = {
     environment: ConfigEnvironment;
   }): Promise<Record<string, unknown>>;
   cancelTokenConfiguration(operationId: string, environment: ConfigEnvironment): Record<string, unknown>;
+  assertTokenConfigurationCredential(operationId: string, currentTokenFingerprint: string, environment: ConfigEnvironment): Record<string, unknown>;
   commitTokenConfiguration(
     operationId: string,
     action: string,
     environment: ConfigEnvironment,
     selectedProfileName?: string,
+    credentialId?: string,
+    currentTokenFingerprint?: string,
   ): Record<string, unknown>;
+  finalizeTokenConfiguration(operationId: string, environment: ConfigEnvironment): Record<string, unknown>;
 };
 
 type CliApi = {
-  writeConnectorConfig(profile: PublicProfile, environment: ConfigEnvironment): string;
-  writeConfigConnectorConfig(environment: ConfigEnvironment, credentialId?: string | null): string;
+  ensureOpenScienceCredential(token: string, report: Record<string, unknown>): Record<string, unknown>;
   registerConnector(profile: PublicProfile, report: Record<string, unknown>): Record<string, unknown>;
   registerConfigConnector(
     credentialId: string | null | undefined,
@@ -69,6 +76,22 @@ export function activeProfile(environment: ConfigEnvironment): PublicProfile | n
   return profileStore.getActiveProfile(environment);
 }
 
+export function captureProfileStore(environment: ConfigEnvironment): Record<string, unknown> {
+  return profileStore.captureProfileStore(environment);
+}
+
+export function restoreProfileStore(snapshot: Record<string, unknown>, environment: ConfigEnvironment): PublicProfile | null {
+  return profileStore.restoreProfileStore(snapshot, environment);
+}
+
+export function activateProfile(name: string, environment: ConfigEnvironment): PublicProfile {
+  return profileStore.useProfile(name, environment);
+}
+
+export function tokenFingerprint(value: string): string {
+  return profileStore.tokenFingerprint(value);
+}
+
 export function beginTokenConfiguration(input: {
   name?: string;
   apiBaseUrl?: string;
@@ -82,21 +105,31 @@ export function cancelTokenConfiguration(operationId: string, environment: Confi
   return setup.cancelTokenConfiguration(operationId, environment);
 }
 
+export function assertTokenConfigurationCredential(
+  operationId: string,
+  currentTokenFingerprint: string,
+  environment: ConfigEnvironment,
+): Record<string, unknown> {
+  return setup.assertTokenConfigurationCredential(operationId, currentTokenFingerprint, environment);
+}
+
 export function commitTokenConfiguration(
   operationId: string,
   action: string,
   environment: ConfigEnvironment,
   selectedProfileName?: string,
+  credentialId?: string,
+  currentTokenFingerprint?: string,
 ): Record<string, unknown> {
-  return setup.commitTokenConfiguration(operationId, action, environment, selectedProfileName);
+  return setup.commitTokenConfiguration(operationId, action, environment, selectedProfileName, credentialId, currentTokenFingerprint);
 }
 
-export function writeConnectorConfig(profile: PublicProfile, environment: ConfigEnvironment): string {
-  return cli.writeConnectorConfig(profile, environment);
+export function finalizeTokenConfiguration(operationId: string, environment: ConfigEnvironment): Record<string, unknown> {
+  return setup.finalizeTokenConfiguration(operationId, environment);
 }
 
-export function writeConfigConnectorConfig(environment: ConfigEnvironment, credentialId?: string | null): string {
-  return cli.writeConfigConnectorConfig(environment, credentialId);
+export function ensureOpenScienceCredential(token: string, report: Record<string, unknown>): Record<string, unknown> {
+  return cli.ensureOpenScienceCredential(token, report);
 }
 
 export function registerConnector(profile: PublicProfile, report: Record<string, unknown>): Record<string, unknown> {

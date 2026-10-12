@@ -1,15 +1,20 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import {
   activeProfile,
+  activateProfile,
+  assertTokenConfigurationCredential,
   beginTokenConfiguration,
+  captureProfileStore,
   cancelTokenConfiguration,
   commitTokenConfiguration,
+  ensureOpenScienceCredential,
+  finalizeTokenConfiguration,
   listProfiles,
   openScienceReport,
   registerConfigConnector,
   registerConnector,
-  writeConfigConnectorConfig,
-  writeConnectorConfig,
+  restoreProfileStore,
+  tokenFingerprint,
 } from './bridge.js';
 import {
   cancelSchema,
@@ -105,23 +110,61 @@ export function createServer(): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ operationId, action, profileName }): Promise<ToolTextResult> => {
+      let snapshot: Record<string, unknown> | null = null;
+      let localCommitSucceeded = false;
       try {
         const env = environment();
-        const result = commitTokenConfiguration(operationId, action, env, profileName);
-        const profile = result.profile as Parameters<typeof writeConnectorConfig>[0];
-        const connectorConfigPath = writeConnectorConfig(profile, env);
-        const registration = registerConnector(profile, registrationReport());
-        const configConnectorConfigPath = writeConfigConnectorConfig(env, profile.credentialId);
-        const configRegistration = registerConfigConnector(profile.credentialId, registrationReport());
+        const token = env['SLR_AGENT_TOKEN']?.trim();
+        if (!token) return errorResult('CREDENTIAL_MISSING', 'Bind an Open-Science credential named SLR_AGENT_TOKEN to the SLR Config connector, then retry.');
+        assertTokenConfigurationCredential(operationId, tokenFingerprint(token), env);
+        const report = registrationReport();
+        const credentialBinding = ensureOpenScienceCredential(token, report);
+        if (credentialBinding.configured !== true || !credentialBinding.credentialId) {
+          return errorResult('CREDENTIAL_BINDING_FAILED', `Unable to bind SLR_AGENT_TOKEN (${credentialBinding.reason || 'unknown error'}).`);
+        }
+
+        snapshot = captureProfileStore(env);
+        const result = commitTokenConfiguration(
+          operationId,
+          action,
+          env,
+          profileName,
+          String(credentialBinding.credentialId),
+          tokenFingerprint(token),
+        );
+        const profile = result.profile as Parameters<typeof registerConnector>[0];
+        const registration = registerConnector(profile, report);
+        const configRegistration = registerConfigConnector(String(credentialBinding.credentialId), report);
+        const connectorsReady = registration.registered === true && registration.enabled === true
+          && configRegistration.registered === true && configRegistration.enabled === true;
+        if (!connectorsReady) {
+          restoreProfileStore(snapshot, env);
+          return errorResult(
+            'CONNECTOR_REGISTRATION_FAILED',
+            `Both connectors must be enabled before activation (review: ${registration.reason || 'failed'}, config: ${configRegistration.reason || 'failed'}).`,
+          );
+        }
+
+        const active = activateProfile(profile.name, env);
+        finalizeTokenConfiguration(operationId, env);
+        localCommitSucceeded = true;
         return jsonResult({
-          ...result,
-          connectorConfigPath,
-          registration,
-          configConnectorConfigPath,
-          configRegistration,
-          connectorState: registration.registered && registration.enabled ? 'enabled' : 'reconnect_required',
+          ok: true,
+          action: result.action,
+          profile: active,
+          connection: result.connection,
+          match: result.match,
+          credentialBinding: {
+            configured: true,
+            credentialId: credentialBinding.credentialId,
+            displayName: credentialBinding.displayName,
+          },
+          connectorState: 'enabled',
         });
       } catch (error) {
+        if (snapshot && !localCommitSucceeded) {
+          try { restoreProfileStore(snapshot, environment()); } catch { /* Preserve the original error. */ }
+        }
         return safeError(error);
       }
     },

@@ -14,7 +14,7 @@ SLR review menu
 6. Show help (/slr help)
 ```
 
-Use numbered choices as a fallback when the host does not provide command buttons.
+Use the numbered choices as the normal command menu when the host does not provide command buttons.
 `/slr help` must render this menu even when the host does not provide command buttons.
 
 ## Suggested next actions
@@ -78,19 +78,16 @@ If `Assigned tasks` is `none`, replace the next line with:
 Next: Assign a paper in the SLR web application, then run /slr tasks
 ```
 
-When it fails because the connector is missing or disconnected, show the minimum setup checklist:
+When it fails because the connector is missing or disconnected, show only:
 
 ```text
 SLR setup is incomplete
-1. Add/restart the local SLR connector.
-2. Ensure the imported connector contains the selected `--profile <name>` and the profile API URL.
-3. Ensure that profile has a local token and that the installer has bound the Open-Science Credential `SLR_AGENT_TOKEN`; rerun the installer if the binding is missing.
-4. Run /slr setup again.
+Reconnect the SLR review connector, then run /slr setup again.
 ```
 
 Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
 
-If the user offers to paste a token in chat, decline that path and direct them to the connector's encrypted Access token Credential named `SLR_AGENT_TOKEN` or the terminal CLI fallback. If the token was exposed outside that protected path, recommend rotation in the SLR project settings.
+If the user offers to paste a token in chat, decline that path and direct them to the connector's encrypted Access token Credential named `SLR_AGENT_TOKEN`. If the token was exposed outside that protected path, recommend rotation in the SLR project settings.
 
 ## Config response
 
@@ -101,7 +98,7 @@ If the user offers to paste a token in chat, decline that path and direct them t
 3. Call `slr_config_validate`; the connector reads `SLR_AGENT_TOKEN` from the host credential binding.
 4. Present exactly one save, switch, or update choice, then call `slr_config_commit` after the user's choice.
 
-If the config connector is unavailable or returns `CREDENTIAL_MISSING`, explain that the installer could not bind the `SLR_AGENT_TOKEN` Access token Credential; rerun the installer and reconnect the connector. Never claim a profile changed without a successful commit.
+If the config connector is unavailable or returns `CREDENTIAL_MISSING`, report `CONFIG_CONNECTOR_UNAVAILABLE` or the credential error, ask the user to reconnect the connector or start a new conversation, and never claim a profile changed without a successful commit.
 
 ```text
 SLR profile configured

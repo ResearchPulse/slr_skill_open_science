@@ -66,7 +66,7 @@ Follow this sequence:
 
 1. Call `list_assigned_tasks` with `limit: 1`. This is the only MCP call made by `/slr setup`; it is a read-only check.
 2. If the read-only call succeeds, report `Setup ready`, the returned project name when available, and whether assigned tasks exist. If tasks exist, suggest `/slr tasks` or `/slr review next`; otherwise suggest assigning a paper in the SLR web application first.
-3. If the connector is unavailable, show only these missing settings: local connector command/arguments with `--profile <name>`, the profile API URL, and either a local profile token or the optional `SLR_AGENT_TOKEN` credential binding. Never ask the user to paste the token into chat.
+3. If the connector is unavailable, report that the SLR review connector is unavailable and ask the user to reconnect it. Never ask the user to paste the token into chat or provide a terminal/manual substitute.
 4. After the user reconnects or restarts the connector, rerun the read-only check. Do not claim setup is complete before it succeeds.
 
 ## Quick profile/token configuration
@@ -75,12 +75,12 @@ Follow this sequence:
 
 1. Call `slr_config_profiles` and show only safe profile metadata.
 2. Ask the user to choose an existing profile or create a profile name before validating a credential.
-3. The connector reads `SLR_AGENT_TOKEN` from the host's encrypted Open-Science Credential binding. The `npx` setup command creates or updates and binds this credential automatically when the Open-Science CLI is available; if it is missing, tell the user to reconnect the connector or use the terminal fallback. Never ask them to paste the raw token into chat.
+3. The connector reads `SLR_AGENT_TOKEN` from the host's encrypted Open-Science Credential binding. The `npx` setup command must create or update this credential and bind both connectors before setup succeeds. If the credential or config connector is missing, report the exact missing capability and ask the user to reconnect; never provide a terminal/manual substitute.
 4. Call `slr_config_validate` for the selected profile. If the credential matches another profile, suggest switching to it; if it matches the same project with a rotated token, suggest updating it; otherwise suggest saving to the selected/new profile.
-5. After the user accepts the single suggested action, call `slr_config_commit` with the staged operation ID and action. The connector updates the local profile and secret-free connector definitions.
+5. After the user accepts the single suggested action, call `slr_config_commit` with the staged operation ID and action. The connector updates the secret-free local profile, enables both registered connectors, and activates the profile only after both succeed.
 6. Treat missing credentials or connector registration failure as incomplete setup. Ask the user to rerun the installer or reconnect the `slr-config` connector, then retry `/slr config` or run `/slr status` after reconnecting.
 
-If the config connector is unavailable, show the terminal CLI fallback and do not claim that the profile or connector changed. `/slr config` must never silently substitute the review connector's four tools.
+If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE`, do not claim that the profile or connector changed, and ask the user to reconnect or start a new Open-Science conversation. `/slr config` must never silently substitute the review connector's four tools.
 
 When setup succeeds with no assigned tasks, do not suggest review commands; suggest assigning a paper in the SLR web application first.
 
@@ -88,7 +88,7 @@ The skill cannot install packages or change Open-Science connector settings as p
 
 ## Token input rule
 
-The project token must be entered only in the encrypted Open-Science Credential field named `SLR_AGENT_TOKEN`. Never repeat, display, summarize, log, persist, include it in an MCP argument, or place it in a draft. If the credential or config connector is unavailable, direct setup to the terminal CLI fallback. If the token was exposed outside the protected credential path, recommend rotation. The API base URL is plain connector configuration; it is not a token credential.
+The project token must be entered only in the encrypted Open-Science Credential field named `SLR_AGENT_TOKEN`. Never repeat, display, summarize, log, persist, include it in an MCP argument, or place it in a draft. If the credential or config connector is unavailable, report the missing connector capability and ask for reconnect. If the token was exposed outside the protected credential path, recommend rotation. The API base URL is plain connector configuration; it is not a token credential.
 
 There is no `/slr submit` command. Submission is an internal final step of `/slr review`.
 

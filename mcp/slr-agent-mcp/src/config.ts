@@ -13,6 +13,7 @@ export interface McpConfig {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_JSON_RESPONSE_BYTES = 1 * 1024 * 1024;
 const DEFAULT_MARKDOWN_RESPONSE_BYTES = 8 * 1024 * 1024;
+const APPROVED_API_HOSTS = ['slr-api.hyperdatalab.org', 'localhost', '127.0.0.1', '[::1]', '::1'];
 
 function requiredValue(name: string, value: string | undefined): string {
   const normalized = value?.trim() || '';
@@ -34,8 +35,8 @@ function normalizeApiBaseUrl(raw: string, allowedHosts: string[] = []): string {
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error('SLR_API_BASE_URL must not contain credentials, query parameters, or fragments');
   }
-  if (allowedHosts.length > 0 && !allowedHosts.includes(parsed.hostname.toLowerCase())) {
-    throw new Error('SLR_API_BASE_URL host is not in SLR_API_ALLOWED_HOSTS');
+  if (!allowedHosts.includes(parsed.hostname.toLowerCase())) {
+    throw new Error('SLR_API_BASE_URL host is not in the approved SLR API allowlist');
   }
 
   const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
@@ -65,7 +66,12 @@ function parseResponseLimit(name: string, raw: string | undefined, fallback: num
 }
 
 function parseAllowedHosts(raw: string | undefined): string[] {
-  return (raw || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+  const requested = (raw || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+  const unsupported = requested.filter(host => !APPROVED_API_HOSTS.includes(host));
+  if (unsupported.length > 0) {
+    throw new Error(`SLR_API_ALLOWED_HOSTS contains an unapproved host: ${unsupported[0]}`);
+  }
+  return requested.length > 0 ? requested : [...APPROVED_API_HOSTS];
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): McpConfig {

@@ -1,23 +1,21 @@
-import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  captureProfileStore,
   createProfile,
   getActiveProfile,
   getProfile,
   listProfiles,
   removeProfile,
-  configRootFor,
+  tokenFingerprint,
+  restoreProfileStore,
   updateProfile,
   useProfile,
 } from './profile-store.js';
 import { installSkill } from './skill-store.js';
 import {
-  beginTokenConfiguration,
-  cancelTokenConfiguration,
-  commitTokenConfiguration,
   prepareProfile,
   testProfileConnection,
 } from './setup.js';
@@ -123,8 +121,9 @@ function waitMilliseconds(milliseconds) {
 }
 
 function parseJsonOutput(stdout) {
+  if (!String(stdout || '').trim()) return null;
   try {
-    return JSON.parse(stdout || '{}');
+    return JSON.parse(stdout);
   } catch {
     return null;
   }
@@ -141,7 +140,10 @@ function connectorRecords(value) {
     if (connectorIdFromRecord(candidate) && (
       candidate.name || candidate.connectorName || candidate.displayName || candidate.connector?.name
       || candidate.config?.name || candidate.config?.displayName || candidate.config?.connector?.name
-    )) records.push(candidate);
+    )) {
+      records.push(candidate);
+      if (candidate.config || candidate.connector) return;
+    }
     Object.values(candidate).forEach(visit);
   };
   visit(value);
@@ -155,7 +157,19 @@ function connectorIdFromRecord(record) {
 
 function existingConnectorId(stdout, connector) {
   const records = connectorRecords(parseJsonOutput(stdout));
-  const namedMatch = records.find(record => {
+  const expectedMode = connector.args.includes('--config-mcp') ? '--config-mcp' : '--mcp';
+  const signatureMatches = records.filter(record => {
+    const config = record?.config || record?.connector || record;
+    const args = Array.isArray(config?.args) ? config.args.map(value => String(value)) : [];
+    return config?.command === connector.command
+      && args.includes('github:ResearchPulse/slr_skill_open_science')
+      && args.includes(expectedMode)
+      && (connector.args.includes('--profile')
+        ? args.includes('--profile')
+          && args[args.indexOf('--profile') + 1] === connector.args[connector.args.indexOf('--profile') + 1]
+        : !args.includes('--profile'));
+  });
+  const namedMatch = signatureMatches.find(record => {
     const names = [
       record?.id,
       record?.name,
@@ -169,16 +183,7 @@ function existingConnectorId(stdout, connector) {
     return names.includes(connector.name) || names.includes(connector.displayName);
   });
   if (namedMatch) return connectorIdFromRecord(namedMatch);
-
-  const expectedMode = connector.args.includes('--config-mcp') ? '--config-mcp' : '--mcp';
-  const signatureMatch = records.find(record => {
-    const config = record?.config || record?.connector || record;
-    const args = Array.isArray(config?.args) ? config.args.map(value => String(value)) : [];
-    return config?.command === connector.command
-      && args.includes('github:ResearchPulse/slr_skill_open_science')
-      && args.includes(expectedMode);
-  });
-  return signatureMatch ? connectorIdFromRecord(signatureMatch) : null;
+  return signatureMatches.length === 1 ? connectorIdFromRecord(signatureMatches[0]) : null;
 }
 
 function failureCode(result) {
@@ -216,9 +221,9 @@ export function ensureOpenScienceDaemon(
   return { ready: false, started: true, reason: 'open-science-daemon-not-ready' };
 }
 
-function connectorIdFromAddOutput(stdout, fallback) {
+function connectorIdFromAddOutput(stdout) {
   const value = parseJsonOutput(stdout);
-  return value?.id || value?.connectorId || value?.connector?.id || value?.data?.id || fallback;
+  return value?.id || value?.connectorId || value?.connector?.id || value?.data?.id || null;
 }
 
 function credentialRecords(stdout) {
@@ -244,9 +249,7 @@ function credentialFailure(result, operation) {
 
 function existingSlrCredential(stdout) {
   const credentials = credentialRecords(stdout).filter(credential => credential?.kind === 'token');
-  return credentials.find(credential => credential.displayName === SLR_CREDENTIAL_DISPLAY_NAME)
-    || credentials.find(credential => credential.displayName === 'SLR project token')
-    || (credentials.length === 1 ? credentials[0] : null);
+  return credentials.find(credential => credential.displayName === SLR_CREDENTIAL_DISPLAY_NAME) || null;
 }
 
 export function ensureOpenScienceCredential(
@@ -269,6 +272,9 @@ export function ensureOpenScienceCredential(
   const listed = run(executable, ['credential', 'list', '--json']);
   if (listed.error || listed.status !== 0) {
     return { configured: false, reason: credentialFailure(listed, 'list') };
+  }
+  if (parseJsonOutput(listed.stdout) === null) {
+    return { configured: false, reason: 'open-science-credential-list-failed:invalid_json' };
   }
 
   const existing = existingSlrCredential(listed.stdout);
@@ -297,33 +303,6 @@ export function ensureOpenScienceCredential(
   };
 }
 
-function writeConnectorDefinitionConfig(connector, environment = process.env) {
-  const directory = join(configRootFor(environment), 'connectors');
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const target = join(directory, `${connector.name}.json`);
-  const temporary = `${target}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(connector, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-    flag: 'wx',
-  });
-  try { chmodSync(temporary, 0o600); } catch { /* Windows may not support POSIX modes. */ }
-  try {
-    renameSync(temporary, target);
-  } finally {
-    if (existsSync(temporary)) unlinkSync(temporary);
-  }
-  return target;
-}
-
-export function writeConnectorConfig(profile, environment = process.env) {
-  return writeConnectorDefinitionConfig(connectorConfig(profile), environment);
-}
-
-export function writeConfigConnectorConfig(environment = process.env, credentialId = undefined) {
-  return writeConnectorDefinitionConfig(configConnectorConfig(credentialId), environment);
-}
-
 function registerConnectorDefinition(connector, report, run = openScienceCommand, ensureDaemon = ensureOpenScienceDaemon) {
   if (!report.openScienceCli.available || !report.openScienceCli.executable) {
     return { registered: false, reason: 'open-science-cli-not-detected' };
@@ -337,9 +316,17 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
     };
   }
   const listed = run(executable, ['connector', 'list', '--json']);
-  const existingId = listed.error || listed.status !== 0
-    ? null
-    : existingConnectorId(listed.stdout, connector);
+  if (listed.error || listed.status !== 0) {
+    return {
+      registered: false,
+      reason: `open-science-connector-list-failed${failureCode(listed) ? `:${failureCode(listed)}` : ''}`,
+      exitCode: listed.status ?? null,
+    };
+  }
+  if (parseJsonOutput(listed.stdout) === null) {
+    return { registered: false, reason: 'open-science-connector-list-failed:invalid_json' };
+  }
+  const existingId = existingConnectorId(listed.stdout, connector);
   let operation = existingId ? 'update' : 'add';
   let connectorId = existingId;
   let result = run(
@@ -347,14 +334,6 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
     existingId ? ['connector', 'update', existingId, '--json'] : ['connector', 'add', '--json'],
     `${JSON.stringify(connector)}\n`,
   );
-  if ((result.error || result.status !== 0) && !existingId) {
-    const fallback = run(executable, ['connector', 'update', connector.name, '--json'], `${JSON.stringify(connector)}\n`);
-    if (!fallback.error && fallback.status === 0) {
-      operation = 'update';
-      connectorId = connector.name;
-      result = fallback;
-    }
-  }
   if (result.error || result.status !== 0) {
     return {
       registered: false,
@@ -362,7 +341,10 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
       exitCode: result.status ?? null,
     };
   }
-  connectorId ||= connectorIdFromAddOutput(result.stdout, connector.name);
+  connectorId ||= connectorIdFromAddOutput(result.stdout);
+  if (!connectorId) {
+    return { registered: false, reason: 'open-science-connector-id-missing' };
+  }
   const enabled = run(executable, ['connector', 'enable', connectorId]);
   if (enabled.error || enabled.status !== 0) {
     return {
@@ -376,6 +358,7 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
 }
 
 export function registerConnector(profile, report, run = openScienceCommand, ensureDaemon = ensureOpenScienceDaemon) {
+  if (!profile?.credentialId) return { registered: false, reason: 'credential-binding-missing' };
   return registerConnectorDefinition(connectorConfig(profile), report, run, ensureDaemon);
 }
 
@@ -385,6 +368,7 @@ export function registerConfigConnector(
   run = openScienceCommand,
   ensureDaemon = ensureOpenScienceDaemon,
 ) {
+  if (!credentialId) return { registered: false, reason: 'credential-binding-missing' };
   return registerConnectorDefinition(configConnectorConfig(credentialId), report, run, ensureDaemon);
 }
 
@@ -504,11 +488,10 @@ Setup flags:
   --no-register skip connector registration
 
 Credentials:
-  Setup asks for the token with hidden terminal input. Config accepts a token
-  only through stdin, validates it before committing, and never prints it.
-  Use config profiles, config begin --profile NAME --token-stdin --json,
-  then config commit --operation ID --action save|switch|update --json.
-  Never pass a token in argv or generated connector JSON.`);
+  Setup asks for the token with hidden terminal input, binds it to the
+  Open-Science credential named SLR_AGENT_TOKEN, and never stores it locally.
+  The config MCP validates and commits profile changes inside one connected
+  session; tokens never appear in tool arguments or results.`);
 }
 
 function printSetup(report, asJson, setup = {}) {
@@ -521,9 +504,7 @@ function printSetup(report, asJson, setup = {}) {
       connection: setup.connection || null,
       credentialBinding: setup.credentialBinding || null,
       registration: setup.registration || null,
-      connectorConfigPath: setup.connectorConfigPath || null,
       configRegistration: setup.configRegistration || null,
-      configConnectorConfigPath: setup.configConnectorConfigPath || null,
       nextSteps: [
         'Open a new Open-Science conversation so the updated /slr skill is loaded.',
         'Run /slr setup to verify the read-only MCP connection.',
@@ -543,34 +524,11 @@ function printSetup(report, asJson, setup = {}) {
     console.log('API: not tested');
   }
   if (setup.credentialBinding?.configured) console.log('Credential: bound to SLR_AGENT_TOKEN');
-  if (!setup.registration) {
-    console.log('Connector: registration skipped');
-  } else if (setup.registration.registered && setup.registration.enabled) {
-    console.log('Connector: enabled');
-  } else if (setup.registration.registered) {
-    console.log(`Connector: registered but not enabled (${setup.registration.reason || 'unknown error'})`);
-  } else if (setup.registration.reason === 'open-science-cli-not-detected') {
-    console.log('Connector: Open-Science CLI not found (manual import required)');
-  } else if (setup.registration.reason?.startsWith('open-science-daemon-')) {
-    console.log('Connector: Open-Science daemon could not be started (manual import required)');
-  } else {
-    console.log('Connector: not registered automatically' + (setup.registration?.reason ? ' (' + setup.registration.reason + ')' : ''));
-  }
-  if (!setup.configRegistration) {
-    console.log('Config connector: registration skipped');
-  } else if (setup.configRegistration.registered && setup.configRegistration.enabled) {
-    console.log('Config connector: enabled');
-  } else if (setup.configRegistration.registered) {
-    console.log('Config connector: registered but not enabled (' + (setup.configRegistration.reason || 'unknown error') + ')');
-  } else {
-    console.log('Config connector: not registered automatically' + (setup.configRegistration.reason ? ' (' + setup.configRegistration.reason + ')' : ''));
-  }
+  const reviewReady = setup.registration?.registered === true && setup.registration?.enabled === true;
+  const configReady = setup.configRegistration?.registered === true && setup.configRegistration?.enabled === true;
+  if (reviewReady && configReady) console.log('Connectors: enabled (slr-default, slr-config)');
+  else console.log(`Connector setup failed (${setup.registration?.reason || setup.configRegistration?.reason || 'unknown'})`);
   if (setup.skill?.status) console.log('Skill: ' + setup.skill.status);
-  if ((!setup.registration?.registered || !setup.registration.enabled
-    || !setup.configRegistration?.registered || !setup.configRegistration.enabled)
-    && (setup.connectorConfigPath || setup.configConnectorConfigPath)) {
-    console.log('Manual config: ' + [setup.connectorConfigPath, setup.configConnectorConfigPath].filter(Boolean).join(', '));
-  }
   console.log('Next: Open-Science → New conversation → /slr setup');
 }
 
@@ -644,13 +602,6 @@ function runSkillCommand(args, asJson, packageRoot) {
   printValue(installSkill(packageRoot, flagValue(args, '--skill-dir')), asJson);
 }
 
-async function readAllStdin() {
-  let value = '';
-  process.stdin.setEncoding('utf8');
-  for await (const chunk of process.stdin) value += chunk;
-  return value.trim();
-}
-
 async function runConfigCommand(args, asJson, report) {
   const configIndex = args.indexOf('config');
   const candidate = args[configIndex + 1];
@@ -659,44 +610,10 @@ async function runConfigCommand(args, asJson, report) {
     printValue({ profiles: listProfiles() }, true);
     return;
   }
-  if (subcommand === 'begin') {
-    if (!hasFlag(args, '--token-stdin')) throw new Error('config begin requires --token-stdin');
-    const token = await readAllStdin();
-    const result = await beginTokenConfiguration({
-      name: profileNameFrom(args),
-      apiBaseUrl: flagValue(args, '--api-base-url'),
-      token,
-    });
-    printValue(result, true);
-    if (!result.ok) process.exitCode = 1;
-    return;
+  if (['begin', 'commit', 'cancel', 'print'].includes(subcommand)) {
+    throw new Error('profile token configuration is available only through the connected slr-config MCP connector');
   }
-  if (subcommand === 'commit') {
-    const operation = flagValue(args, '--operation');
-    const action = flagValue(args, '--action');
-    if (!operation || !action) throw new Error('config commit requires --operation and --action');
-    const result = commitTokenConfiguration(operation, action, process.env, profileNameFrom(args));
-    const connectorConfigPath = writeConnectorConfig(result.profile);
-    const registration = registerConnector(result.profile, report);
-    const configConnectorConfigPath = writeConfigConnectorConfig(process.env, result.profile.credentialId);
-    const configRegistration = registerConfigConnector(result.profile.credentialId, report);
-    const connectorReady = registration.registered === true && registration.enabled === true;
-    const activeProfile = connectorReady ? useProfile(result.profile.name) : getActiveProfile();
-    if (report.openScienceCli.available && !connectorReady) process.exitCode = 1;
-    printValue({ ...result, activeProfile, connectorConfigPath, registration, configConnectorConfigPath, configRegistration }, true);
-    return;
-  }
-  if (subcommand === 'cancel') {
-    const operation = flagValue(args, '--operation');
-    if (!operation) throw new Error('config cancel requires --operation');
-    printValue(cancelTokenConfiguration(operation), true);
-    return;
-  }
-  if (subcommand === 'print') {
-    printValue(connectorConfig(selectedProfile(args)), true);
-    return;
-  }
-  throw new Error('unknown config command; use profiles, begin, commit, cancel, or print');
+  throw new Error('unknown config command; use profiles or /slr config in Open-Science');
 }
 
 export async function main(args = process.argv.slice(2), options = {}) {
@@ -712,7 +629,9 @@ export async function main(args = process.argv.slice(2), options = {}) {
   }
 
   if (command === 'setup') {
-    const options = profileOptions(args);
+    const profileStoreSnapshot = captureProfileStore(process.env);
+    try {
+      const options = profileOptions(args);
     const interactive = !asJson && Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const setup = await prepareProfile({
       name: options.name,
@@ -733,17 +652,16 @@ export async function main(args = process.argv.slice(2), options = {}) {
       ? ensureOpenScienceCredential(setup.token, report)
       : null;
     if (profile && credentialBinding?.configured) {
-      profile = updateProfile(profile.name, { credentialId: credentialBinding.credentialId });
+      profile = updateProfile(profile.name, {
+        credentialId: credentialBinding.credentialId,
+        credentialFingerprint: tokenFingerprint(setup.token),
+      });
     }
-    const connectorConfigPath = profile ? writeConnectorConfig(profile) : null;
     const registration = profile && !hasFlag(args, '--no-register')
-      ? registerConnector(profile, report)
-      : null;
-    const configConnectorConfigPath = !hasFlag(args, '--no-register')
-      ? writeConfigConnectorConfig(process.env, profile?.credentialId)
+      ? (credentialBinding?.configured ? registerConnector(profile, report) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
       : null;
     const configRegistration = !hasFlag(args, '--no-register')
-      ? registerConfigConnector(profile?.credentialId, report)
+      ? (credentialBinding?.configured ? registerConfigConnector(credentialBinding.credentialId, report) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
       : null;
     const value = {
       command: 'setup',
@@ -754,9 +672,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
       connection,
       credentialBinding,
       registration,
-      connectorConfigPath,
       configRegistration,
-      configConnectorConfigPath,
       skill,
       nextSteps: [
         'Open a new Open-Science conversation so the updated /slr skill is loaded.',
@@ -764,11 +680,27 @@ export async function main(args = process.argv.slice(2), options = {}) {
         'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.',
       ],
     };
+    const connectorsReady = registration?.registered === true && registration?.enabled === true
+      && configRegistration?.registered === true && configRegistration?.enabled === true;
+    if (!hasFlag(args, '--no-register') && !connectorsReady) process.exitCode = 1;
+    if (!hasFlag(args, '--no-register') && !connectorsReady) {
+      restoreProfileStore(profileStoreSnapshot, process.env);
+      profile = null;
+    } else if (connectorsReady && profile) {
+      profile = useProfile(profile.name);
+    }
+    value.mode = profile && setup.token ? 'configured' : 'incomplete';
+    value.profile = profile || null;
+    value.connector = profile ? connectorConfig(profile) : null;
     if (asJson) printValue(value, true);
     else {
-      printSetup(report, false, { profile, connection, credentialBinding, registration, connectorConfigPath, configRegistration, configConnectorConfigPath, skill });
+      printSetup(report, false, { profile, connection, credentialBinding, registration, configRegistration, skill });
     }
-    return;
+      return;
+    } catch (error) {
+      try { restoreProfileStore(profileStoreSnapshot, process.env); } catch { /* Preserve the original setup error. */ }
+      throw error;
+    }
   }
 
   if (command === 'profile') {

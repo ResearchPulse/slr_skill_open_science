@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { getActiveProfile, getProfile, loadProfileToken } from '../cli/profile-store.js';
+import { getActiveProfile, getProfile } from '../cli/profile-store.js';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -35,12 +35,9 @@ function resolveMcpEnvironment(mcpArgs) {
     environment.SLR_PROFILE_ID = profile.name;
     if (profile.projectId) environment.SLR_PROJECT_ID = profile.projectId;
     if (profile.projectName) environment.SLR_PROJECT_NAME = profile.projectName;
-    if (!environment.SLR_AGENT_TOKEN) {
-      environment.SLR_AGENT_TOKEN = loadProfileToken(profile.name, environment) || undefined;
-    }
   }
   if (!environment.SLR_API_BASE_URL || !environment.SLR_AGENT_TOKEN) {
-    fail('MCP needs an active profile with a local token, or connector environment values for SLR_API_BASE_URL and SLR_AGENT_TOKEN');
+    fail('MCP needs an active profile and the host credential binding SLR_AGENT_TOKEN');
     return null;
   }
   return environment;

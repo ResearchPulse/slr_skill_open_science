@@ -37,7 +37,7 @@ function withStore(run) {
 test('profiles keep metadata and workspaces isolated without storing tokens', () => withStore((environment, root) => {
   const first = createProfile({
     name: 'project-one',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     projectId: 'p1',
     projectName: 'One',
     credentialId: 'cred-1',
@@ -45,7 +45,7 @@ test('profiles keep metadata and workspaces isolated without storing tokens', ()
   }, environment);
   const second = createProfile({
     name: 'project-two',
-    apiBaseUrl: 'https://slr.example.test/api',
+    apiBaseUrl: 'https://slr-api.hyperdatalab.org/api',
     projectId: 'p2',
     projectName: 'Two',
     credentialId: 'cred-2',
@@ -59,21 +59,32 @@ test('profiles keep metadata and workspaces isolated without storing tokens', ()
   assert.equal(root.includes('project-one'), false);
 }));
 
-test('local profile tokens are isolated from metadata and removed with the profile', () => withStore((environment) => {
-  const profile = createProfile({ name: 'local-token', apiBaseUrl: 'https://slr.example.test/api' }, environment);
-  saveProfileToken(profile.name, 'slrp_local_secret', environment);
+test('profile tokens are never stored locally', () => withStore((environment) => {
+  const profile = createProfile({ name: 'local-token', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api' }, environment);
+  assert.throws(() => saveProfileToken(profile.name, 'slrp_local_secret', environment), /local token storage is disabled/);
 
   const metadata = readFileSync(join(getConfigRoot(environment), 'profiles.json'), 'utf8');
   assert.equal(metadata.includes('slrp_local_secret'), false);
-  assert.equal(loadProfileToken(profile.name, environment), 'slrp_local_secret');
-  assert.equal(listProfiles(environment)[0].hasLocalToken, true);
+  assert.equal(loadProfileToken(profile.name, environment), null);
+  assert.equal(listProfiles(environment)[0].hasLocalToken, false);
 
   removeProfile(profile.name, environment);
   assert.throws(() => loadProfileToken(profile.name, environment), /profile not found/);
 }));
 
+test('reading profiles removes legacy plaintext token files', () => withStore((environment, root) => {
+  createProfile({ name: 'legacy-cleanup', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api' }, environment);
+  const legacyDirectory = join(root, 'tokens');
+  mkdirSync(legacyDirectory, { recursive: true });
+  const legacyPath = join(legacyDirectory, 'legacy-cleanup');
+  writeFileSync(legacyPath, 'slrp_legacy_secret\n', 'utf8');
+  assert.equal(existsSync(legacyPath), true);
+  assert.equal(listProfiles(environment)[0].hasLocalToken, false);
+  assert.equal(existsSync(legacyPath), false);
+}));
+
 test('workspace writes drafts, receipts, and bounded audit records', () => withStore((environment) => {
-  const profile = createProfile({ name: 'safe', apiBaseUrl: 'https://slr.example.test/api', projectId: 'p1' }, environment);
+  const profile = createProfile({ name: 'safe', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api', projectId: 'p1' }, environment);
   const paths = initializeWorkspace(profile);
   const draft = saveDraft(profile, 'task-1', {
     decision: 'INCLUDE',
@@ -92,20 +103,21 @@ test('workspace rejects traversal-like task ids and unsafe URLs', () => withStor
   assert.throws(() => createProfile({ name: '../unsafe', apiBaseUrl: 'https://slr.example.test/api' }, environment));
   assert.throws(() => createProfile({ name: 'unsafe', apiBaseUrl: 'https://user:pass@slr.example.test/api' }, environment));
   assert.throws(() => createProfile({ name: 'unsafe', apiBaseUrl: 'http://remote.example.test/api' }, environment));
+  assert.throws(() => createProfile({ name: 'unsafe', apiBaseUrl: 'https://remote.example.test/api' }, environment), /host is not allowed/);
 }));
 
 test('recreating a profile name receives a fresh workspace', () => withStore((environment) => {
-  const first = createProfile({ name: 'reusable', apiBaseUrl: 'https://slr.example.test/api' }, environment);
+  const first = createProfile({ name: 'reusable', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api' }, environment);
   initializeWorkspace(first);
   saveDraft(first, 'old-task', { decision: 'EXCLUDE', reasoning: 'Old project draft.' });
   removeProfile('reusable', environment);
-  const second = createProfile({ name: 'reusable', apiBaseUrl: 'https://slr.example.test/api' }, environment);
+  const second = createProfile({ name: 'reusable', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api' }, environment);
   assert.notEqual(first.workspaceRoot, second.workspaceRoot);
   assert.deepEqual(listDrafts(second), []);
 }));
 
 test('workspace rejects a symlinked profile path when the platform permits symlink creation', () => withStore((environment, root) => {
-  const profile = createProfile({ name: 'linked', apiBaseUrl: 'https://slr.example.test/api' }, environment);
+  const profile = createProfile({ name: 'linked', apiBaseUrl: 'https://slr-api.hyperdatalab.org/api' }, environment);
   const outside = join(root, 'outside');
   const link = join(root, 'profiles', 'linked');
   mkdirSync(outside, { recursive: true });
