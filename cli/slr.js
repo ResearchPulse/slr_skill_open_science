@@ -6,7 +6,6 @@ import {
   captureProfileStore,
   createProfile,
   getActiveProfile,
-  getConfigRoot,
   getProfile,
   listProfiles,
   removeProfile,
@@ -16,6 +15,7 @@ import {
   useProfile,
 } from './profile-store.js';
 import { defaultSkillRoot, installSkill, removeManagedSkill } from './skill-store.js';
+import { ensureRuntime } from './runtime-store.js';
 import {
   prepareProfile,
   testProfileConnection,
@@ -69,31 +69,34 @@ function printValue(value, asJson = false) {
   console.log(asJson ? JSON.stringify(value, null, 2) : JSON.stringify(value, null, 2));
 }
 
-function connectorNpxArgs(kind, profileName = 'default') {
-  const cacheName = kind === 'config' ? 'config' : `review-${profileName}`;
-  const cachePath = join(getConfigRoot(), 'npm-cache', 'connectors', cacheName);
-  return ['--yes', '--prefer-offline', '--cache', cachePath, 'github:ResearchPulse/slr_skill_open_science'];
+function connectorRuntimeArgs(runtimePackageRoot, mode, profileName = undefined) {
+  const args = [resolve(runtimePackageRoot, 'bin', 'install.js'), mode];
+  if (profileName) args.push('--profile', profileName);
+  return args;
 }
 
-function connectorConfig(profile) {
+function connectorConfig(profile, runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   if (!profile) throw new Error('no active profile; create or select one first');
   return {
     name: profile.connectorName || `slr-${profile.name}`,
     displayName: `SLR (${profile.projectName || profile.name})`,
     transport: 'stdio',
-    command: 'npx',
-    args: [...connectorNpxArgs('review', profile.name), '--mcp', '--profile', profile.name],
+    command: process.execPath,
+    args: connectorRuntimeArgs(runtimePackageRoot, '--mcp', profile.name),
     ...(profile.credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: profile.credentialId } } : {}),
   };
 }
 
-function configConnectorConfig(credentialId = undefined) {
+function configConnectorConfig(
+  credentialId = undefined,
+  runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+) {
   return {
     name: 'slr-config',
     displayName: 'SLR Config',
     transport: 'stdio',
-    command: 'npx',
-    args: [...connectorNpxArgs('config'), '--config-mcp'],
+    command: process.execPath,
+    args: connectorRuntimeArgs(runtimePackageRoot, '--config-mcp'),
     ...(credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: credentialId } } : {}),
   };
 }
@@ -168,8 +171,11 @@ function existingConnectorId(stdout, connector) {
   const signatureMatches = records.filter(record => {
     const config = record?.config || record?.connector || record;
     const args = Array.isArray(config?.args) ? config.args.map(value => String(value)) : [];
-    return config?.command === connector.command
-      && args.includes('github:ResearchPulse/slr_skill_open_science')
+    const directRuntime = config?.command === connector.command
+      && args.some(value => /[\\/]bin[\\/]install\.js$/i.test(value));
+    const legacyNpx = config?.command === 'npx'
+      && args.includes('github:ResearchPulse/slr_skill_open_science');
+    return (directRuntime || legacyNpx)
       && args.includes(expectedMode)
       && (connector.args.includes('--profile')
         ? args.includes('--profile')
@@ -364,9 +370,15 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
   return { registered: true, enabled: true, connector: connectorId, updated: operation === 'update' };
 }
 
-export function registerConnector(profile, report, run = openScienceCommand, ensureDaemon = ensureOpenScienceDaemon) {
+export function registerConnector(
+  profile,
+  report,
+  run = openScienceCommand,
+  ensureDaemon = ensureOpenScienceDaemon,
+  runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+) {
   if (!profile?.credentialId) return { registered: false, reason: 'credential-binding-missing' };
-  return registerConnectorDefinition(connectorConfig(profile), report, run, ensureDaemon);
+  return registerConnectorDefinition(connectorConfig(profile, runtimePackageRoot), report, run, ensureDaemon);
 }
 
 export function registerConfigConnector(
@@ -374,9 +386,10 @@ export function registerConfigConnector(
   report,
   run = openScienceCommand,
   ensureDaemon = ensureOpenScienceDaemon,
+  runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
 ) {
   if (!credentialId) return { registered: false, reason: 'credential-binding-missing' };
-  return registerConnectorDefinition(configConnectorConfig(credentialId), report, run, ensureDaemon);
+  return registerConnectorDefinition(configConnectorConfig(credentialId, runtimePackageRoot), report, run, ensureDaemon);
 }
 
 function profileOptions(args) {
@@ -504,8 +517,9 @@ Credentials:
   session; tokens never appear in profile metadata or connector JSON.`);
 }
 
-function runMcpCommand(args, asJson, report) {
+function runMcpCommand(args, asJson, report, packageRoot) {
   const profile = selectedProfile(args);
+  const runtimePackageRoot = profile ? ensureRuntime(packageRoot).packageRoot : null;
   const value = {
     command: 'mcp',
     openScienceCli: report.openScienceCli,
@@ -517,8 +531,8 @@ function runMcpCommand(args, asJson, report) {
       connectorId: profile.connectorId,
       connectorName: profile.connectorName,
     } : null,
-    reviewConnector: profile ? connectorConfig(profile) : null,
-    configConnector: configConnectorConfig(profile?.credentialId),
+    reviewConnector: profile && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null,
+    configConnector: runtimePackageRoot ? configConnectorConfig(profile?.credentialId, runtimePackageRoot) : null,
     note: 'Connector metadata only; tokens are stored by Open-Science credentials and are never printed.',
   };
   printValue(value, asJson);
@@ -704,18 +718,21 @@ export async function main(args = process.argv.slice(2), options = {}) {
         credentialFingerprint: tokenFingerprint(setup.token),
       });
     }
+    const runtimePackageRoot = profile && setup.token && !hasFlag(args, '--no-register') && credentialBinding?.configured
+      ? ensureRuntime(packageRoot).packageRoot
+      : null;
     const registration = profile && !hasFlag(args, '--no-register')
-      ? (credentialBinding?.configured ? registerConnector(profile, report) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
+      ? (credentialBinding?.configured ? registerConnector(profile, report, openScienceCommand, ensureOpenScienceDaemon, runtimePackageRoot) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
       : null;
     const configRegistration = !hasFlag(args, '--no-register')
-      ? (credentialBinding?.configured ? registerConfigConnector(credentialBinding.credentialId, report) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
+      ? (credentialBinding?.configured ? registerConfigConnector(credentialBinding.credentialId, report, openScienceCommand, ensureOpenScienceDaemon, runtimePackageRoot) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
       : null;
     const value = {
       command: 'setup',
       mode: profile && setup.token ? 'configured' : 'incomplete',
       ...report,
       profile: profile || null,
-      connector: profile ? connectorConfig(profile) : null,
+      connector: profile && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null,
       connection,
       credentialBinding,
       registration,
@@ -738,7 +755,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
     }
     value.mode = profile && setup.token ? 'configured' : 'incomplete';
     value.profile = profile || null;
-    value.connector = profile ? connectorConfig(profile) : null;
+    value.connector = profile && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null;
     if (asJson) printValue(value, true);
     else {
       printSetup(report, false, { profile, connection, credentialBinding, registration, configRegistration, skill });
@@ -771,7 +788,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
   }
 
   if (command === 'mcp') {
-    runMcpCommand(args, asJson, report);
+    runMcpCommand(args, asJson, report, packageRoot);
     return;
   }
 

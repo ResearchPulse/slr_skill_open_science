@@ -92,9 +92,9 @@ test('connector registration enables the connector after adding it', () => {
   ]);
   assert.match(calls[1].input, /"name":"slr-default"/);
   const connector = JSON.parse(calls[1].input);
-  assert.ok(connector.args.includes('--prefer-offline'));
-  assert.ok(connector.args.includes('--cache'));
-  assert.equal(connector.args[connector.args.indexOf('--cache') + 1].endsWith('npm-cache\\connectors\\review-default'), true);
+  assert.equal(connector.command, process.execPath);
+  assert.match(connector.args[0], /[\\/]bin[\\/]install\.js$/);
+  assert.deepEqual(connector.args.slice(1), ['--mcp', '--profile', 'default']);
 });
 
 test('Open-Science credential binding creates a stable SLR token credential', () => {
@@ -352,7 +352,7 @@ test('config connector requires the host credential binding', () => {
   assert.deepEqual(result, { registered: false, reason: 'credential-binding-missing' });
 });
 
-test('config connector uses its own offline npm cache', () => {
+test('config connector uses the stable direct-node runtime', () => {
   const calls = [];
   const report = { openScienceCli: { available: true, executable: 'open-science' } };
   const run = (executable, args, input) => {
@@ -370,9 +370,9 @@ test('config connector uses its own offline npm cache', () => {
     updated: false,
   });
   const connector = JSON.parse(calls.find(call => call.args[1] === 'add').input);
-  assert.ok(connector.args.includes('--prefer-offline'));
-  assert.ok(connector.args.includes('--cache'));
-  assert.equal(connector.args[connector.args.indexOf('--cache') + 1].endsWith('npm-cache\\connectors\\config'), true);
+  assert.equal(connector.command, process.execPath);
+  assert.match(connector.args[0], /[\\/]bin[\\/]install\.js$/);
+  assert.deepEqual(connector.args.slice(1), ['--config-mcp']);
 });
 
 test('connector registration recognizes nested connector configuration output', () => {

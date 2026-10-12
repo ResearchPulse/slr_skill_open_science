@@ -14,7 +14,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 Strict setup contract: the project token is held only in the encrypted Open-Science Credential `SLR_AGENT_TOKEN`; setup succeeds only after both `slr-default` and `slr-config` are registered and enabled. There is no local token file or manual connector-import fallback.
 
-Current connector model: setup prepares two local MCP connectors. The review connector is used for the five Claude-compatible SLR task tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. When the Open-Science CLI is available, setup creates or updates the `SLR_AGENT_TOKEN` Credential and binds it to both connectors automatically.
+Current connector model: setup prepares two local MCP connectors. The review connector is used for the five Claude-compatible SLR task tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. When the Open-Science CLI is available, setup creates or updates the `SLR_AGENT_TOKEN` Credential and binds it to both connectors automatically. Setup also stages a dependency-complete runtime under `~/.slr/runtimes/<fingerprint>` and registers a direct Node launcher, so a long-running connector never re-runs `npx` against a locked `_npx` cache on Windows.
 
 Running the command with no subcommand starts the Claude-style interactive setup. It detects the runtime, copies `/slr`, uses the production API URL by default, asks only for the hidden project token, stores only secret-free profile metadata plus a token fingerprint, tests the API, creates or updates the encrypted `SLR_AGENT_TOKEN` Credential, and creates or updates then enables both Open-Science connectors. When the Open-Science CLI is installed but its daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows it also checks common per-user install locations and the optional `OPEN_SCIENCE_CLI` path when the CLI is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
 
@@ -82,28 +82,28 @@ Submission has one user-facing confirmation. `/slr review` shows the exact draft
 
 ## Root MCP connector
 
-Configure the released root package as the Open-Science connector command:
+Setup registers the released package as a direct Node connector. The generated configuration is equivalent to:
 
 ```text
-Command: npx
-Arguments: --yes github:ResearchPulse/slr_skill_open_science --mcp --profile afl-review
+Command: <Node executable>
+Arguments: <managed runtime>/bin/install.js --mcp --profile afl-review
 ```
 
-The equivalent shell command is:
+The one-time package installation remains:
 
 ```powershell
-npx github:ResearchPulse/slr_skill_open_science --mcp --profile <profile-name>
+npx github:ResearchPulse/slr_skill_open_science
 ```
 
-The root `--mcp` entrypoint resolves the selected secret-free profile and requires the host credential binding `SLR_AGENT_TOKEN` in its environment. The profile API URL is authoritative. Without a profile, direct environment values `SLR_API_BASE_URL` and `SLR_AGENT_TOKEN` are required. The root `--mcp` entrypoint forwards stdio to the MCP server without invoking a shell; stdout is reserved for MCP JSON-RPC and diagnostics use stderr.
+The managed `install.js --mcp` entrypoint resolves the selected secret-free profile and requires the host credential binding `SLR_AGENT_TOKEN` in its environment. The profile API URL is authoritative. The root `--mcp` entrypoint forwards stdio to the MCP server without invoking a shell; stdout is reserved for MCP JSON-RPC and diagnostics use stderr.
 
 ## Config MCP connector
 
-Use the separate connector for `/slr config`:
+Use the separate managed connector for `/slr config`:
 
 ```text
-Command: npx
-Arguments: --yes github:ResearchPulse/slr_skill_open_science --config-mcp
+Command: <Node executable>
+Arguments: <managed runtime>/bin/install.js --config-mcp
 Credential binding: SLR_AGENT_TOKEN
 ```
 
