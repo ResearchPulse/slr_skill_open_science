@@ -100,9 +100,9 @@ async function runCli(cliArgs) {
   await cli.main(cliArgs, { packageRoot });
 }
 
-if (args[0] === '--mcp' || args[0] === 'mcp') {
+if (args[0] === '--mcp') {
   runMcp(args.slice(1));
-} else if (args[0] === '--config-mcp' || args[0] === 'config-mcp') {
+} else if (args[0] === '--config-mcp') {
   runConfigMcp(args.slice(1));
 } else {
   runCli(args).catch(error => {

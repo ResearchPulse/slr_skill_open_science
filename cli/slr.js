@@ -6,6 +6,7 @@ import {
   captureProfileStore,
   createProfile,
   getActiveProfile,
+  getConfigRoot,
   getProfile,
   listProfiles,
   removeProfile,
@@ -68,6 +69,12 @@ function printValue(value, asJson = false) {
   console.log(asJson ? JSON.stringify(value, null, 2) : JSON.stringify(value, null, 2));
 }
 
+function connectorNpxArgs(kind, profileName = 'default') {
+  const cacheName = kind === 'config' ? 'config' : `review-${profileName}`;
+  const cachePath = join(getConfigRoot(), 'npm-cache', 'connectors', cacheName);
+  return ['--yes', '--prefer-offline', '--cache', cachePath, 'github:ResearchPulse/slr_skill_open_science'];
+}
+
 function connectorConfig(profile) {
   if (!profile) throw new Error('no active profile; create or select one first');
   return {
@@ -75,7 +82,7 @@ function connectorConfig(profile) {
     displayName: `SLR (${profile.projectName || profile.name})`,
     transport: 'stdio',
     command: 'npx',
-    args: ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--mcp', '--profile', profile.name],
+    args: [...connectorNpxArgs('review', profile.name), '--mcp', '--profile', profile.name],
     ...(profile.credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: profile.credentialId } } : {}),
   };
 }
@@ -86,7 +93,7 @@ function configConnectorConfig(credentialId = undefined) {
     displayName: 'SLR Config',
     transport: 'stdio',
     command: 'npx',
-    args: ['--yes', 'github:ResearchPulse/slr_skill_open_science', '--config-mcp'],
+    args: [...connectorNpxArgs('config'), '--config-mcp'],
     ...(credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: credentialId } } : {}),
   };
 }
@@ -474,7 +481,7 @@ Commands:
 In-chat /slr commands (after the skill is imported):
   /slr help  Show the SLR command menu and confirmation rule
   /slr config Configure or switch the local project profile
-  /slr setup Run the read-only quick check via list_assigned_tasks(limit: 1)
+  /slr setup Run the bounded read-only quick check via connection_test
 
 The package command slr setup installs/prepares local assets and connector
 configuration; it is different from the in-chat /slr setup check.

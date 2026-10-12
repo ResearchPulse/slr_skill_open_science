@@ -91,6 +91,10 @@ test('connector registration enables the connector after adding it', () => {
     ['connector', 'enable', 'connector-123'],
   ]);
   assert.match(calls[1].input, /"name":"slr-default"/);
+  const connector = JSON.parse(calls[1].input);
+  assert.ok(connector.args.includes('--prefer-offline'));
+  assert.ok(connector.args.includes('--cache'));
+  assert.equal(connector.args[connector.args.indexOf('--cache') + 1].endsWith('npm-cache\\connectors\\review-default'), true);
 });
 
 test('Open-Science credential binding creates a stable SLR token credential', () => {
@@ -346,6 +350,29 @@ test('config connector requires the host credential binding', () => {
     throw new Error('connector command must not run without a credential');
   }, () => ({ ready: true }));
   assert.deepEqual(result, { registered: false, reason: 'credential-binding-missing' });
+});
+
+test('config connector uses its own offline npm cache', () => {
+  const calls = [];
+  const report = { openScienceCli: { available: true, executable: 'open-science' } };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[1] === 'list') return { status: 0, error: undefined, stdout: JSON.stringify({ connectors: [] }) };
+    return args[1] === 'add'
+      ? { status: 0, error: undefined, stdout: JSON.stringify({ id: 'config-connector' }) }
+      : { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(registerConfigConnector('credential-slr', report, run, daemonAlreadyReady), {
+    registered: true,
+    enabled: true,
+    connector: 'config-connector',
+    updated: false,
+  });
+  const connector = JSON.parse(calls.find(call => call.args[1] === 'add').input);
+  assert.ok(connector.args.includes('--prefer-offline'));
+  assert.ok(connector.args.includes('--cache'));
+  assert.equal(connector.args[connector.args.indexOf('--cache') + 1].endsWith('npm-cache\\connectors\\config'), true);
 });
 
 test('connector registration recognizes nested connector configuration output', () => {
