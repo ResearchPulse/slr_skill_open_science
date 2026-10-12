@@ -28,7 +28,7 @@ Current connector model:
 - `slr-config-mcp` is a separate local connector used only by `/slr config`.
 - The config connector reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Access token Credential. It never accepts a raw token in chat or as a tool argument.
 
-When setup cannot register the config connector automatically, import this definition manually, bind the Credential named `SLR_AGENT_TOKEN` to it, and reconnect:
+When automatic registration is unavailable, import this definition manually, bind the Credential named `SLR_AGENT_TOKEN` to it, and reconnect:
 
 ```text
 Command: npx
@@ -36,9 +36,9 @@ Arguments: --yes github:ResearchPulse/slr_skill_open_science --config-mcp
 Credential binding: SLR_AGENT_TOKEN
 ```
 
-The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, asks only for the project token through hidden terminal input, saves the token in the selected local profile, tests `GET /agent/v1/tasks?limit=1`, creates or updates then enables the Open-Science connector. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
+The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, asks only for the project token through hidden terminal input, saves the token in the selected local profile, creates or updates the encrypted `SLR_AGENT_TOKEN` Credential, tests `GET /agent/v1/tasks?limit=1`, and creates or updates then enables both Open-Science connectors. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server. The token is never printed, written to profile metadata, generated connector JSON, drafts, audit records, or chat.
 
-Use `--json` for a non-interactive report. If automatic registration is unavailable, import the generated connector configuration manually. The connector arguments include `--profile <name>`, so the root `--mcp` launcher can load the matching protected local token. After the connector and skill are available, open a new Open-Science conversation and run `/slr setup`; that chat command performs the read-only check and does not collect credentials.
+Use `--json` for a non-interactive report. If automatic registration or credential binding is unavailable, import the generated connector configuration manually and bind `SLR_AGENT_TOKEN`. The connector arguments include `--profile <name>`, so the root `--mcp` launcher can load the matching protected local token. After the connector and skill are available, open a new Open-Science conversation and run `/slr setup`; that chat command performs the read-only check and does not collect credentials.
 
 `setup` có thể tạo/kiểm tra profile metadata, hỏi token bằng terminal input ẩn và test API. Token không ghi vào profile metadata, không in ra output và không đi vào connector JSON. Dùng `--json` để chạy non-interactive; chế độ này không hỏi token:
 

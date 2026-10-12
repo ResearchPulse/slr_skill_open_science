@@ -75,10 +75,10 @@ Follow this sequence:
 
 1. Call `slr_config_profiles` and show only safe profile metadata.
 2. Ask the user to choose an existing profile or create a profile name before validating a credential.
-3. The connector reads `SLR_AGENT_TOKEN` from the host's encrypted Open-Science Credential binding. Tell the user to create or update that Access token credential in Connector settings; never ask them to paste the raw token into chat.
+3. The connector reads `SLR_AGENT_TOKEN` from the host's encrypted Open-Science Credential binding. The `npx` setup command creates or updates and binds this credential automatically when the Open-Science CLI is available; if it is missing, tell the user to reconnect the connector or use the terminal fallback. Never ask them to paste the raw token into chat.
 4. Call `slr_config_validate` for the selected profile. If the credential matches another profile, suggest switching to it; if it matches the same project with a rotated token, suggest updating it; otherwise suggest saving to the selected/new profile.
 5. After the user accepts the single suggested action, call `slr_config_commit` with the staged operation ID and action. The connector updates the local profile and secret-free connector definitions.
-6. Treat missing credentials or connector registration failure as incomplete setup. Ask the user to bind or reconnect the `slr-config` connector, then retry `/slr config` or run `/slr status` after reconnecting.
+6. Treat missing credentials or connector registration failure as incomplete setup. Ask the user to rerun the installer or reconnect the `slr-config` connector, then retry `/slr config` or run `/slr status` after reconnecting.
 
 If the config connector is unavailable, show the terminal CLI fallback and do not claim that the profile or connector changed. `/slr config` must never silently substitute the review connector's four tools.
 

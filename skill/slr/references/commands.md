@@ -84,7 +84,7 @@ When it fails because the connector is missing or disconnected, show the minimum
 SLR setup is incomplete
 1. Add/restart the local SLR connector.
 2. Ensure the imported connector contains the selected `--profile <name>` and the profile API URL.
-3. Ensure that profile has a local token, or bind an Open-Science Credential to SLR_AGENT_TOKEN when using host-managed credentials.
+3. Ensure that profile has a local token and that the installer has bound the Open-Science Credential `SLR_AGENT_TOKEN`; rerun the installer if the binding is missing.
 4. Run /slr setup again.
 ```
 
@@ -101,7 +101,7 @@ If the user offers to paste a token in chat, decline that path and direct them t
 3. Call `slr_config_validate`; the connector reads `SLR_AGENT_TOKEN` from the host credential binding.
 4. Present exactly one save, switch, or update choice, then call `slr_config_commit` after the user's choice.
 
-If the config connector is unavailable or returns `CREDENTIAL_MISSING`, explain that the Access token Credential must be bound to `slr-config` and the connector must be reconnected. Never claim a profile changed without a successful commit.
+If the config connector is unavailable or returns `CREDENTIAL_MISSING`, explain that the installer could not bind the `SLR_AGENT_TOKEN` Access token Credential; rerun the installer and reconnect the connector. Never claim a profile changed without a successful commit.
 
 ```text
 SLR profile configured

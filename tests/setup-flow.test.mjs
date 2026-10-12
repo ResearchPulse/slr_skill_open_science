@@ -11,7 +11,12 @@ import {
   prepareProfile,
   testProfileConnection,
 } from '../cli/setup.js';
-import { ensureOpenScienceDaemon, registerConnector, writeConnectorConfig } from '../cli/slr.js';
+import {
+  ensureOpenScienceCredential,
+  ensureOpenScienceDaemon,
+  registerConnector,
+  writeConnectorConfig,
+} from '../cli/slr.js';
 
 const daemonAlreadyReady = () => ({ ready: true, started: false });
 
@@ -123,6 +128,80 @@ test('connector registration enables the connector after adding it', () => {
     ['connector', 'enable', 'connector-123'],
   ]);
   assert.match(calls[1].input, /"name":"slr-default"/);
+});
+
+test('Open-Science credential binding creates a stable SLR token credential', () => {
+  const calls = [];
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[0] === 'credential' && args[1] === 'list') {
+      return { status: 0, error: undefined, stdout: JSON.stringify({ credentials: [] }) };
+    }
+    if (args[0] === 'credential' && args[1] === 'add') {
+      return {
+        status: 0,
+        error: undefined,
+        stdout: JSON.stringify({ createdCredential: { id: 'credential-slr' } }),
+      };
+    }
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  assert.deepEqual(ensureOpenScienceCredential('slrp_test_secret', report, run, daemonAlreadyReady), {
+    configured: true,
+    credentialId: 'credential-slr',
+    displayName: 'SLR_AGENT_TOKEN',
+    created: true,
+    updated: false,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['credential', 'list', '--json'],
+    ['credential', 'add', '--json'],
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].input), {
+    displayName: 'SLR_AGENT_TOKEN',
+    kind: 'token',
+    secret: 'slrp_test_secret',
+  });
+});
+
+test('Open-Science credential binding updates an existing SLR credential without returning its secret', () => {
+  const calls = [];
+  const report = {
+    openScienceCli: { available: true, executable: 'open-science' },
+  };
+  const run = (executable, args, input) => {
+    calls.push({ executable, args, input });
+    if (args[0] === 'credential' && args[1] === 'list') {
+      return {
+        status: 0,
+        error: undefined,
+        stdout: JSON.stringify({ credentials: [{ id: 'credential-existing', displayName: 'SLR project token', kind: 'token' }] }),
+      };
+    }
+    return { status: 0, error: undefined, stdout: '' };
+  };
+
+  const result = ensureOpenScienceCredential('slrp_rotated_secret', report, run, daemonAlreadyReady);
+  assert.deepEqual(result, {
+    configured: true,
+    credentialId: 'credential-existing',
+    displayName: 'SLR_AGENT_TOKEN',
+    created: false,
+    updated: true,
+  });
+  assert.deepEqual(calls.map(call => call.args), [
+    ['credential', 'list', '--json'],
+    ['credential', 'update', 'credential-existing', '--json'],
+  ]);
+  assert.equal(JSON.stringify(result).includes('slrp_rotated_secret'), false);
+  assert.deepEqual(JSON.parse(calls[1].input), {
+    displayName: 'SLR_AGENT_TOKEN',
+    secret: 'slrp_rotated_secret',
+  });
 });
 
 test('connector registration updates an existing connector instead of adding a duplicate', () => {

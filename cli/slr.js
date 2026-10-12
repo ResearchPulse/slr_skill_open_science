@@ -29,6 +29,7 @@ const DAEMON_POLL_DELAY_MS = 250;
 const OPEN_SCIENCE_STATUS_TIMEOUT_MS = 2_000;
 const OPEN_SCIENCE_START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_OPTION_PREFIXES = ['--token', '--agent-token', '--api-key', '--password', '--secret'];
+const SLR_CREDENTIAL_DISPLAY_NAME = 'SLR_AGENT_TOKEN';
 const VALUE_FLAGS = new Set([
   '--profile', '--name', '--api-base-url', '--project-id', '--project-name',
   '--credential-id', '--connector-id', '--connector-name', '--skill-dir', '--limit',
@@ -218,6 +219,82 @@ export function ensureOpenScienceDaemon(
 function connectorIdFromAddOutput(stdout, fallback) {
   const value = parseJsonOutput(stdout);
   return value?.id || value?.connectorId || value?.connector?.id || value?.data?.id || fallback;
+}
+
+function credentialRecords(stdout) {
+  const value = parseJsonOutput(stdout);
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.credentials)) return value.credentials;
+  if (Array.isArray(value?.data?.credentials)) return value.data.credentials;
+  return [];
+}
+
+function credentialIdFromWriteOutput(stdout, fallback) {
+  const value = parseJsonOutput(stdout);
+  return value?.createdCredential?.id
+    || value?.credential?.id
+    || value?.data?.credential?.id
+    || value?.id
+    || fallback;
+}
+
+function credentialFailure(result, operation) {
+  return `open-science-credential-${operation}-failed${failureCode(result) ? `:${failureCode(result)}` : ''}`;
+}
+
+function existingSlrCredential(stdout) {
+  const credentials = credentialRecords(stdout).filter(credential => credential?.kind === 'token');
+  return credentials.find(credential => credential.displayName === SLR_CREDENTIAL_DISPLAY_NAME)
+    || credentials.find(credential => credential.displayName === 'SLR project token')
+    || (credentials.length === 1 ? credentials[0] : null);
+}
+
+export function ensureOpenScienceCredential(
+  token,
+  report,
+  run = openScienceCommand,
+  ensureDaemon = ensureOpenScienceDaemon,
+) {
+  if (!token) return { configured: false, reason: 'token-missing' };
+  if (!report.openScienceCli.available || !report.openScienceCli.executable) {
+    return { configured: false, reason: 'open-science-cli-not-detected' };
+  }
+
+  const executable = report.openScienceCli.executable;
+  const daemon = ensureDaemon(executable, run);
+  if (!daemon?.ready) {
+    return { configured: false, reason: daemon?.reason || 'open-science-daemon-not-ready' };
+  }
+
+  const listed = run(executable, ['credential', 'list', '--json']);
+  if (listed.error || listed.status !== 0) {
+    return { configured: false, reason: credentialFailure(listed, 'list') };
+  }
+
+  const existing = existingSlrCredential(listed.stdout);
+  const operation = existing ? 'update' : 'add';
+  const args = existing
+    ? ['credential', 'update', existing.id, '--json']
+    : ['credential', 'add', '--json'];
+  const input = `${JSON.stringify({
+    displayName: SLR_CREDENTIAL_DISPLAY_NAME,
+    ...(existing ? {} : { kind: 'token' }),
+    secret: token,
+  })}\n`;
+  const written = run(executable, args, input);
+  if (written.error || written.status !== 0) {
+    return { configured: false, reason: credentialFailure(written, operation) };
+  }
+
+  const credentialId = credentialIdFromWriteOutput(written.stdout, existing?.id);
+  if (!credentialId) return { configured: false, reason: 'open-science-credential-id-missing' };
+  return {
+    configured: true,
+    credentialId,
+    displayName: SLR_CREDENTIAL_DISPLAY_NAME,
+    created: !existing,
+    updated: Boolean(existing),
+  };
 }
 
 function writeConnectorDefinitionConfig(connector, environment = process.env) {
@@ -442,6 +519,7 @@ function printSetup(report, asJson, setup = {}) {
       ...report,
       profile: setup.profile || null,
       connection: setup.connection || null,
+      credentialBinding: setup.credentialBinding || null,
       registration: setup.registration || null,
       connectorConfigPath: setup.connectorConfigPath || null,
       configRegistration: setup.configRegistration || null,
@@ -464,6 +542,7 @@ function printSetup(report, asJson, setup = {}) {
     console.log('SLR setup incomplete');
     console.log('API: not tested');
   }
+  if (setup.credentialBinding?.configured) console.log('Credential: bound to SLR_AGENT_TOKEN');
   if (!setup.registration) {
     console.log('Connector: registration skipped');
   } else if (setup.registration.registered && setup.registration.enabled) {
@@ -650,6 +729,12 @@ export async function main(args = process.argv.slice(2), options = {}) {
         projectName: connection.projectName,
       });
     }
+    const credentialBinding = profile && setup.token && !hasFlag(args, '--no-register')
+      ? ensureOpenScienceCredential(setup.token, report)
+      : null;
+    if (profile && credentialBinding?.configured) {
+      profile = updateProfile(profile.name, { credentialId: credentialBinding.credentialId });
+    }
     const connectorConfigPath = profile ? writeConnectorConfig(profile) : null;
     const registration = profile && !hasFlag(args, '--no-register')
       ? registerConnector(profile, report)
@@ -667,6 +752,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
       profile: profile || null,
       connector: profile ? connectorConfig(profile) : null,
       connection,
+      credentialBinding,
       registration,
       connectorConfigPath,
       configRegistration,
@@ -680,7 +766,7 @@ export async function main(args = process.argv.slice(2), options = {}) {
     };
     if (asJson) printValue(value, true);
     else {
-      printSetup(report, false, { profile, connection, registration, connectorConfigPath, configRegistration, configConnectorConfigPath, skill });
+      printSetup(report, false, { profile, connection, credentialBinding, registration, connectorConfigPath, configRegistration, configConnectorConfigPath, skill });
     }
     return;
   }
