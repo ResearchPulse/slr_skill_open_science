@@ -100,8 +100,15 @@ Working files: `./paper-review/` in the session's working folder (or `$REVIEW_WO
      come back at the end (never tight-poll). `unavailable` → use available content or
      `UNCERTAIN`, and tell the user to upload the PDF in the SLR web app. `PARTIAL`
      Markdown is usable; note partial coverage. Long papers: read Methods first.
-   - **Judge** criterion by criterion with `references/review-rubric.md`. Every claim cites
-     a section of the paper; no invented numbers or quotes.
+   - **Judge** criterion by criterion — **read `references/review-rubric.md` before the first
+     task** (decision rules, confidence, reasoning template). Every claim cites a section of
+     the paper; no invented numbers or quotes.
+   - **`data` is mandatory** and must contain `basis`, `confidence`, `keyFinding` and
+     `criteria`: one item per IC/EC of the `protocolSnapshot`
+     `{"id": "IC1", "name": "<criterion text>", "status": "met|not_met|unclear", "reasoning": "<1–2 sentences>", "evidence": ["\"<short quote>\" (Section)"]}`.
+     The web app builds its **Criteria assessment** panel from `data.criteria`; criteria
+     written only inside `reasoning` do not show there. `CLI draft` and MCP `submit_result`
+     reject a `data` without them (`VALIDATION`) — fix the data, never drop it.
    - **Draft:** write `paper-review/drafts/<id>.reason.md` and `<id>.data.json`, then
      `CLI draft <id> --title "<short>" --decision <D> --reasoning-file … --data-file …`,
      delete the two helper files. (`auto`: then send it right away as in **Approval**.)
@@ -135,7 +142,8 @@ Only when the CLI cannot run. Same files, same shapes, so the CLI can take over 
 
 - `paper-review/drafts/<id>.json`:
   `{"taskId": "<id>", "title": "<short>", "body": {"decision": "...", "reasoning": "...", "data": {...}}}`
-  — `decision` 1–100 chars, `reasoning` ≤ 16,000 chars, whole `body` ≤ 30 KB.
+  — `decision` 1–100 chars, `reasoning` ≤ 16,000 chars, `data` with `basis`, `confidence`,
+  `keyFinding`, `criteria` as in the **Review loop**, whole `body` ≤ 30 KB.
 - After submit: move it to `paper-review/submitted/<id>.json`.
 - Append one line per event to `paper-review/audit.jsonl`:
   `{"at": "<UTC ISO time>", "event": "draft|submit", "taskId": "<id>", "decision"|"result": "..."}`.
@@ -165,5 +173,6 @@ in chat:
 | 404 | task not yours / gone | skip, note it |
 | 409 markdown | wrong stage or Markdown unavailable | `FULLTEXT_STAGE_REQUIRED` → do not retry; screen title/abstract only. Other 409 → use available content or UNCERTAIN |
 | 409 submit | already done | count as done |
+| `VALIDATION` | draft/vote body incomplete (e.g. `data.criteria` missing) | add the missing fields per the rubric, redraft; do not submit without them |
 | 400 | invalid body | fix, redraft |
 | 5xx | backend | connector retries; else retry at end |

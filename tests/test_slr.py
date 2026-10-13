@@ -15,6 +15,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 TOKEN = "slrp_test_token_1234567890"
+DATA = {"basis": "title_abstract", "confidence": 0.9, "keyFinding": "Adults, primary study.",
+        "criteria": [{"id": "IC1", "name": "Adults", "status": "met", "reasoning": "Adult sample.",
+                      "evidence": ['"adults aged 18-65" (Abstract)']},
+                     {"id": "EC1", "name": "Reviews", "status": "not_met", "reasoning": "Primary study.",
+                      "evidence": []}]}
 
 
 def _task(tid, stage, status="ASSIGNED"):
@@ -174,8 +179,7 @@ class McpEndToEnd(unittest.TestCase):
 
     def test_submit_once_then_already_completed(self):
         self.configure()
-        vote = {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "Key reason: adults.",
-                "data": {"confidence": 0.9}}
+        vote = {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "Key reason: adults.", "data": DATA}
         first, second, task = self.mcp(("submit_result", vote), ("submit_result", vote),
                                        ("get_task", {"task_id": "t-ta"}))
         self.assertEqual(first["structuredContent"]["status"], "submitted")
@@ -185,8 +189,24 @@ class McpEndToEnd(unittest.TestCase):
 
     def test_submit_validation_blocks_post(self):
         self.configure()
-        (res,) = self.mcp(("submit_result", {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "  "}))
+        (res,) = self.mcp(("submit_result", {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "  ",
+                                             "data": DATA}))
         self.assertTrue(res["isError"])
+        self.assertEqual(FakeApi.posts, [])
+
+    def test_submit_without_criteria_is_rejected(self):
+        # Regression: votes with data = {confidence, stage} showed no "Criteria assessment" in the web app.
+        self.configure()
+        base = {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "I1: met. I2: met."}
+        bad = [None, {"confidence": 0.9, "stage": "TITLE_ABSTRACT"},
+               {**DATA, "criteria": []},
+               {**DATA, "criteria": [{"id": "IC1", "text": "Adults", "status": "met", "evidence": []}]},
+               {**DATA, "criteria": [{**DATA["criteria"][0], "status": "yes"}]},
+               {**DATA, "basis": "abstract"}]
+        results = self.mcp(*[("submit_result", {**base, **({} if d is None else {"data": d})}) for d in bad])
+        for d, res in zip(bad, results):
+            self.assertTrue(res["isError"], d)
+            self.assertEqual(res["structuredContent"]["code"], "VALIDATION", d)
         self.assertEqual(FakeApi.posts, [])
 
     def test_profiles_switch_live(self):
@@ -203,9 +223,13 @@ class McpEndToEnd(unittest.TestCase):
             p = subprocess.run([sys.executable, str(SCRIPTS / "slr.py"), *args], env=self.env, timeout=60,
                                capture_output=True, text=True, encoding="utf-8")
             return json.loads(p.stdout)
+        data_file = Path(self.tmp.name) / "t-ta.data.json"
+        data_file.write_text(json.dumps(DATA), encoding="utf-8")
         d = cli("draft", "t-ta", "--title", "T", "--decision", "EXCLUDE",
-                "--reasoning", "Decision: EXCLUDE\nKey reason: children.", "--data", '{"confidence": 0.8}')
+                "--reasoning", "Decision: EXCLUDE\nKey reason: children.", "--data-file", str(data_file))
         self.assertTrue(d["ok"])
+        self.assertEqual(cli("draft", "t-ft", "--decision", "INCLUDE", "--reasoning", "x",
+                             "--data", '{"confidence": 0.8}')["code"], "VALIDATION")
         table = cli("drafts")
         self.assertEqual(table["drafts"][0]["keyReason"], "children.")
         m = cli("mark-submitted", "t-ta", "--result", "submitted")

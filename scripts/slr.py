@@ -142,6 +142,44 @@ def workdir():
 
 # ------------------------------------------------------------------ validation
 
+CRITERION_STATUSES = ("met", "not_met", "unclear")
+BASES = ("title_abstract", "full_text", "partial_full_text")
+
+
+def validate_data(data):
+    """The web app's "Criteria assessment" panel renders data.criteria; refuse votes without it.
+
+    Each item: {"id": "IC1", "name": "<criterion text>", "status": met|not_met|unclear,
+                "reasoning": "<one line>", "evidence": ["<short quote (section)>", ...]}
+    """
+    if not isinstance(data, dict):
+        raise ApiError(None, "VALIDATION", "data must be a JSON object with basis, confidence and criteria "
+                       "(see references/review-rubric.md).")
+    if data.get("basis") not in BASES:
+        raise ApiError(None, "VALIDATION", f"data.basis must be one of {', '.join(BASES)}.")
+    conf = data.get("confidence")
+    if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not 0 <= conf <= 1:
+        raise ApiError(None, "VALIDATION", "data.confidence must be a number from 0 to 1.")
+    crit = data.get("criteria")
+    if not isinstance(crit, list) or not crit:
+        raise ApiError(None, "VALIDATION", "data.criteria must list every IC/EC of the task's protocolSnapshot "
+                       "— the web app shows it as 'Criteria assessment'.")
+    for i, c in enumerate(crit):
+        where = f"data.criteria[{i}]"
+        if not isinstance(c, dict):
+            raise ApiError(None, "VALIDATION", f"{where} must be an object.")
+        for key in ("id", "name", "reasoning"):
+            if not isinstance(c.get(key), str) or not c[key].strip():
+                raise ApiError(None, "VALIDATION", f"{where}.{key} is required (non-empty text).")
+        if c.get("status") not in CRITERION_STATUSES:
+            raise ApiError(None, "VALIDATION", f"{where}.status must be one of {', '.join(CRITERION_STATUSES)}.")
+        ev = c.get("evidence")
+        if not isinstance(ev, list) or not all(isinstance(e, str) and e.strip() for e in ev):
+            raise ApiError(None, "VALIDATION", f"{where}.evidence must be a list of short quotes "
+                           "(may be empty only when the paper says nothing about it).")
+    return data
+
+
 def build_body(decision, reasoning, data=None):
     decision = (decision or "").strip()
     if not decision or len(decision) > MAX_DECISION:
@@ -151,12 +189,8 @@ def build_body(decision, reasoning, data=None):
         raise ApiError(None, "VALIDATION", "reasoning is required.")
     if len(reasoning) > MAX_REASONING:
         raise ApiError(None, "VALIDATION", f"reasoning is {len(reasoning)} chars; max {MAX_REASONING}.")
-    body = {"decision": decision, "reasoning": reasoning}
-    if data is not None:
-        if not isinstance(data, dict):
-            raise ApiError(None, "VALIDATION", "data must be a JSON object.")
-        body["data"] = data
-    size = len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+    body = {"decision": decision, "reasoning": reasoning, "data": validate_data(data)}
+    size =len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
     if size > MAX_BODY_BYTES:
         raise ApiError(None, "VALIDATION", f"body is {size} bytes; max {MAX_BODY_BYTES}.")
     return body

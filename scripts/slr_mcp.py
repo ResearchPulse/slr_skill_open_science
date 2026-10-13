@@ -37,6 +37,35 @@ _OBJ = {"type": "object", "additionalProperties": False}
 _TASK_ID = {"task_id": {"type": "string", "description": "Task id from list_tasks"}}
 _PROFILE = {"profile": {"type": "string", "description": "Profile name; default = active profile"}}
 
+# Mirrors slr.validate_data; data.criteria feeds the web app's "Criteria assessment" panel.
+DATA_SCHEMA = {
+    "type": "object",
+    "description": ("Structured assessment. criteria must cover every inclusion (IC1…) and exclusion "
+                    "(EC1…) criterion of the task's protocolSnapshot, in API order. Extra fields "
+                    "(studyDesign, population, intervention, outcomes, exclusionTriggered…) are welcome."),
+    "properties": {
+        "basis": {"type": "string", "enum": ["title_abstract", "full_text", "partial_full_text"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "criteria": {
+            "type": "array", "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "IC1, IC2… / EC1, EC2…"},
+                    "name": {"type": "string", "description": "The criterion text from protocolSnapshot"},
+                    "status": {"type": "string", "enum": ["met", "not_met", "unclear"],
+                               "description": "For EC: met = exclusion triggered"},
+                    "reasoning": {"type": "string", "description": "One or two sentences"},
+                    "evidence": {"type": "array", "items": {"type": "string"},
+                                 "description": "Short quotes with location, e.g. '\"aged 12-17\" (Methods)'"},
+                },
+                "required": ["id", "name", "status", "reasoning", "evidence"],
+            },
+        },
+    },
+    "required": ["basis", "confidence", "criteria"],
+}
+
 TOOLS = [
     {
         "name": "connection_test",
@@ -91,8 +120,8 @@ TOOLS = [
             **_TASK_ID,
             "decision": {"type": "string", "description": "INCLUDE, EXCLUDE or UNCERTAIN", "maxLength": 100},
             "reasoning": {"type": "string", "description": "Reasoning text (max 16,000 chars)"},
-            "data": {"type": "object", "description": "Optional structured data object"}},
-            "required": ["task_id", "decision", "reasoning"]},
+            "data": DATA_SCHEMA},
+            "required": ["task_id", "decision", "reasoning", "data"]},
         "annotations": {"destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
     },
     {
