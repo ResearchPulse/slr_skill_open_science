@@ -15,11 +15,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 TOKEN = "slrp_test_token_1234567890"
-DATA = {"basis": "title_abstract", "confidence": 0.9, "keyFinding": "Adults, primary study.",
-        "criteria": [{"id": "IC1", "name": "Adults", "status": "met", "reasoning": "Adult sample.",
-                      "evidence": ['"adults aged 18-65" (Abstract)']},
-                     {"id": "EC1", "name": "Reviews", "status": "not_met", "reasoning": "Primary study.",
-                      "evidence": []}]}
+# Same shape as the Claude Science skill (references/review-rubric.md).
+DATA = {"basis": "title_abstract", "confidence": 0.9, "studyDesign": "RCT", "population": "Adults",
+        "intervention": None, "comparator": None, "outcomes": [], "exclusionTriggered": [],
+        "evidence": ["Abstract: adults aged 18-65"],
+        "criteria": [{"id": "IC1", "text": "Adults", "status": "met", "evidence": "adults aged 18-65 (Abstract)"},
+                     {"id": "EC1", "text": "Reviews", "status": "not_met", "evidence": "primary study (Abstract)"}]}
+# A vote the Claude Science skill pushed (abridged); must be accepted unchanged.
+CLAUDE_VOTE = {
+    "decision": "INCLUDE",
+    "reasoning": "Decision: INCLUDE\nBasis: title + abstract only\n\nKey reason: K-asynchronous aggregation.",
+    "data": {
+        "comparator": "Existing FL-based IDS methods (not named in the abstract)",
+        "evidence": ["Abstract: aggregation eligibility and order based on gradient quality and staleness"],
+        "exclusionTriggered": [], "outcomes": ["~92% accuracy CICIDS2017"],
+        "criteria": [
+            {"evidence": "Proposed scheme with three-dataset evaluation (Abstract)", "id": "IC1",
+             "text": "Primary study", "status": "met"},
+            {"evidence": "Node selection for global aggregation of client-uploaded gradients (Abstract)",
+             "id": "IC2", "text": "FL or server-based training with a central aggregator", "status": "met"}],
+        "confidence": 0.88, "studyDesign": "Scheme proposal", "basis": "title_abstract",
+        "intervention": "DWKAFL", "population": "Smart-grid devices as FL clients"}}
 
 
 def _task(tid, stage, status="ASSIGNED"):
@@ -194,13 +210,20 @@ class McpEndToEnd(unittest.TestCase):
         self.assertTrue(res["isError"])
         self.assertEqual(FakeApi.posts, [])
 
+    def test_claude_format_vote_is_accepted(self):
+        self.configure()
+        (res,) = self.mcp(("submit_result", {"task_id": "t-ta", **CLAUDE_VOTE}))
+        self.assertEqual(res["structuredContent"]["status"], "submitted")
+        self.assertEqual(FakeApi.posts, [("t-ta", {k: CLAUDE_VOTE[k] for k in ("decision", "reasoning", "data")})])
+
     def test_submit_without_criteria_is_rejected(self):
         # Regression: votes with data = {confidence, stage} showed no "Criteria assessment" in the web app.
         self.configure()
         base = {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "I1: met. I2: met."}
         bad = [None, {"confidence": 0.9, "stage": "TITLE_ABSTRACT"},
                {**DATA, "criteria": []},
-               {**DATA, "criteria": [{"id": "IC1", "text": "Adults", "status": "met", "evidence": []}]},
+               {**DATA, "criteria": [{"id": "IC1", "text": "Adults", "status": "met"}]},
+               {**DATA, "criteria": [{"id": "IC1", "status": "met", "evidence": "x (Abstract)"}]},
                {**DATA, "criteria": [{**DATA["criteria"][0], "status": "yes"}]},
                {**DATA, "basis": "abstract"}]
         results = self.mcp(*[("submit_result", {**base, **({} if d is None else {"data": d})}) for d in bad])

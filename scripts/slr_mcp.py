@@ -41,8 +41,9 @@ _PROFILE = {"profile": {"type": "string", "description": "Profile name; default 
 DATA_SCHEMA = {
     "type": "object",
     "description": ("Structured assessment. criteria must cover every inclusion (IC1…) and exclusion "
-                    "(EC1…) criterion of the task's protocolSnapshot, in API order. Extra fields "
-                    "(studyDesign, population, intervention, outcomes, exclusionTriggered…) are welcome."),
+                    "(EC1…) criterion of the task's protocolSnapshot, in API order. Also include studyDesign, "
+                    "population, intervention, comparator, outcomes, exclusionTriggered and evidence "
+                    "(see references/review-rubric.md)."),
     "properties": {
         "basis": {"type": "string", "enum": ["title_abstract", "full_text", "partial_full_text"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -52,14 +53,13 @@ DATA_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "IC1, IC2… / EC1, EC2…"},
-                    "name": {"type": "string", "description": "The criterion text from protocolSnapshot"},
+                    "text": {"type": "string", "description": "The criterion text from protocolSnapshot"},
                     "status": {"type": "string", "enum": ["met", "not_met", "unclear"],
                                "description": "For EC: met = exclusion triggered"},
-                    "reasoning": {"type": "string", "description": "One or two sentences"},
-                    "evidence": {"type": "array", "items": {"type": "string"},
-                                 "description": "Short quotes with location, e.g. '\"aged 12-17\" (Methods)'"},
+                    "evidence": {"type": "string",
+                                 "description": "Short quote/finding with location, e.g. 'participants aged 12-17 (Methods)'"},
                 },
-                "required": ["id", "name", "status", "reasoning", "evidence"],
+                "required": ["id", "text", "status", "evidence"],
             },
         },
     },

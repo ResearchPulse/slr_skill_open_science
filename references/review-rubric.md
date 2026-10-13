@@ -55,55 +55,39 @@ unsupported statement will be flagged.
 
 ## `data` object (JSON file) — required
 
-The SLR web app renders `data.criteria` as the **Criteria assessment** panel (one expandable
-row per criterion with a MET / NOT MET / UNCLEAR badge, reasoning and evidence quotes). A vote
-without it shows only the free-text reasoning, so `submit_result` and `slr.py draft` **reject**
-a `data` object missing `basis`, `confidence` or a complete `criteria` list.
+Same shape as the Claude Science skill. The SLR web app builds its **Criteria assessment**
+panel from `data.criteria`, so `submit_result` and `slr.py draft` **reject** a `data` without
+`basis`, `confidence` and a `criteria` item (`id`, `text`, `status`, `evidence`) for every
+IC/EC of the task's `protocolSnapshot`. Criteria written only inside `reasoning` do not show
+in that panel. For an exclusion criterion, `status: met` means the exclusion is triggered.
 
 ```json
 {
   "basis": "full_text",
   "confidence": 0.9,
-  "keyFinding": "Population is adolescents 12-17; IC1 requires adults >=18.",
   "studyDesign": "RCT",
   "population": "Adolescents 12-17 with T2D, n=240",
   "intervention": "...",
   "comparator": "...",
   "outcomes": ["HbA1c at 24 weeks"],
   "criteria": [
-    {"id": "IC1", "name": "Adults with type 2 diabetes", "status": "not_met",
-     "reasoning": "Participants are adolescents, not adults.",
-     "evidence": ["\"participants aged 12-17\" (Methods)"]},
-    {"id": "IC2", "name": "Randomized controlled trial", "status": "met",
-     "reasoning": "Randomized parallel-group design.",
-     "evidence": ["\"randomized, parallel-group\" (Methods)"]},
-    {"id": "EC1", "name": "Non-English publication", "status": "not_met",
-     "reasoning": "Paper is in English.", "evidence": []}
+    {"id": "IC1", "text": "Adults with T2D", "status": "not_met", "evidence": "participants aged 12-17 (Methods)"},
+    {"id": "IC2", "text": "RCT", "status": "met", "evidence": "randomized parallel-group (Methods)"}
   ],
-  "exclusionTriggered": ["IC1 not met"]
+  "exclusionTriggered": ["IC1 not met"],
+  "evidence": ["Methods: participants aged 12-17 years"]
 }
 ```
 
-`keyFinding` (recommended) is shown as the card's **Key finding** line — use the same text as
-the reasoning's `Key reason:` line.
-
-Rules for `criteria`:
-
-- One item for **every** inclusion and exclusion criterion of the task's `protocolSnapshot`,
-  in API order: `IC1, IC2…` for `inclusionCriteria`, then `EC1, EC2…` for `exclusionCriteria`.
-- `name` = the criterion text from the snapshot (shortened if very long).
-- `status` = `met` · `not_met` · `unclear`. For an exclusion criterion, `met` means the
-  exclusion **is triggered** (→ EXCLUDE).
-- `reasoning` = one or two sentences; `evidence` = short quotes with their location
-  (`"…" (Abstract)`, `"…" (Methods, p.4)`). Use `[]` only when the paper says nothing about
-  that criterion — then the status is usually `unclear`.
-- Keep the whole body well under 30 KB.
-
 `basis` is `full_text`, `partial_full_text` (fullTextStatus `PARTIAL`) or
-`title_abstract`. Use `null` for other fields the paper does not report.
+`title_abstract`. Use `null` for fields the paper does not report. Keep evidence snippets
+short (one line each) so the body stays well under 30 KB.
 
 Set `basis` according to the task stage and the content actually reviewed. A
 `TITLE_ABSTRACT` task always uses `title_abstract`; do not fetch Markdown for it. For a
 `FULL_TEXT` task, use `partial_full_text` when the API reports `PARTIAL`, and `full_text`
 when extraction completed normally. Assess against that task's `protocolSnapshot`, which
 captures the criteria at assignment time.
+
+Criterion ids: number the task's `protocolSnapshot` criteria in their API order
+(`IC1, IC2…` for inclusionCriteria, `EC1, EC2…` for exclusionCriteria).

@@ -149,8 +149,10 @@ BASES = ("title_abstract", "full_text", "partial_full_text")
 def validate_data(data):
     """The web app's "Criteria assessment" panel renders data.criteria; refuse votes without it.
 
-    Each item: {"id": "IC1", "name": "<criterion text>", "status": met|not_met|unclear,
-                "reasoning": "<one line>", "evidence": ["<short quote (section)>", ...]}
+    Same shape as the Claude Science skill:
+      {"id": "IC1", "text": "<criterion text>", "status": met|not_met|unclear,
+       "evidence": "<short quote / location>"}
+    `name` is accepted for `text`, `evidence` may be a list, `reasoning` is optional.
     """
     if not isinstance(data, dict):
         raise ApiError(None, "VALIDATION", "data must be a JSON object with basis, confidence and criteria "
@@ -168,15 +170,17 @@ def validate_data(data):
         where = f"data.criteria[{i}]"
         if not isinstance(c, dict):
             raise ApiError(None, "VALIDATION", f"{where} must be an object.")
-        for key in ("id", "name", "reasoning"):
-            if not isinstance(c.get(key), str) or not c[key].strip():
-                raise ApiError(None, "VALIDATION", f"{where}.{key} is required (non-empty text).")
+        filled = lambda v: isinstance(v, str) and v.strip()  # noqa: E731
+        if not filled(c.get("id")):
+            raise ApiError(None, "VALIDATION", f"{where}.id is required (IC1, EC1…).")
+        if not (filled(c.get("text")) or filled(c.get("name"))):
+            raise ApiError(None, "VALIDATION", f"{where}.text is required (the criterion text).")
         if c.get("status") not in CRITERION_STATUSES:
             raise ApiError(None, "VALIDATION", f"{where}.status must be one of {', '.join(CRITERION_STATUSES)}.")
         ev = c.get("evidence")
-        if not isinstance(ev, list) or not all(isinstance(e, str) and e.strip() for e in ev):
-            raise ApiError(None, "VALIDATION", f"{where}.evidence must be a list of short quotes "
-                           "(may be empty only when the paper says nothing about it).")
+        if not (filled(ev) or (isinstance(ev, list) and all(filled(e) for e in ev))):
+            raise ApiError(None, "VALIDATION", f"{where}.evidence must be a short quote/location "
+                           "(text, or a list of them).")
     return data
 
 

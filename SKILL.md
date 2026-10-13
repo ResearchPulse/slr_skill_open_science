@@ -103,12 +103,15 @@ Working files: `./paper-review/` in the session's working folder (or `$REVIEW_WO
    - **Judge** criterion by criterion — **read `references/review-rubric.md` before the first
      task** (decision rules, confidence, reasoning template). Every claim cites a section of
      the paper; no invented numbers or quotes.
-   - **`data` is mandatory** and must contain `basis`, `confidence`, `keyFinding` and
-     `criteria`: one item per IC/EC of the `protocolSnapshot`
-     `{"id": "IC1", "name": "<criterion text>", "status": "met|not_met|unclear", "reasoning": "<1–2 sentences>", "evidence": ["\"<short quote>\" (Section)"]}`.
+   - **`data` is mandatory** — same shape as the Claude Science skill (rubric: "`data`
+     object"): `basis`, `confidence`, `studyDesign`, `population`, `intervention`,
+     `comparator`, `outcomes`, `exclusionTriggered`, `evidence`, and `criteria` with one item
+     per IC/EC of the `protocolSnapshot`:
+     `{"id": "IC1", "text": "<criterion text>", "status": "met|not_met|unclear", "evidence": "<short finding (Section)>"}`.
      The web app builds its **Criteria assessment** panel from `data.criteria`; criteria
      written only inside `reasoning` do not show there. `CLI draft` and MCP `submit_result`
-     reject a `data` without them (`VALIDATION`) — fix the data, never drop it.
+     reject a `data` without `basis`, `confidence` and complete `criteria` (`VALIDATION`) —
+     fix the data, never drop it.
    - **Draft:** write `paper-review/drafts/<id>.reason.md` and `<id>.data.json`, then
      `CLI draft <id> --title "<short>" --decision <D> --reasoning-file … --data-file …`,
      delete the two helper files. (`auto`: then send it right away as in **Approval**.)
@@ -142,8 +145,7 @@ Only when the CLI cannot run. Same files, same shapes, so the CLI can take over 
 
 - `paper-review/drafts/<id>.json`:
   `{"taskId": "<id>", "title": "<short>", "body": {"decision": "...", "reasoning": "...", "data": {...}}}`
-  — `decision` 1–100 chars, `reasoning` ≤ 16,000 chars, `data` with `basis`, `confidence`,
-  `keyFinding`, `criteria` as in the **Review loop**, whole `body` ≤ 30 KB.
+  — `decision` 1–100 chars, `reasoning` ≤ 16,000 chars, `data` as in the **Review loop**, whole `body` ≤ 30 KB.
 - After submit: move it to `paper-review/submitted/<id>.json`.
 - Append one line per event to `paper-review/audit.jsonl`:
   `{"at": "<UTC ISO time>", "event": "draft|submit", "taskId": "<id>", "decision"|"result": "..."}`.
