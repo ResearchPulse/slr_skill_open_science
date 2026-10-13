@@ -15,7 +15,7 @@ chỉ gửi sau khi người dùng xác nhận.
 npx github:ResearchPulse/slr_skill_open_science
 ```
 
-*Một lệnh để cài skill, cấu hình credential và đăng ký các MCP connector.*
+*Một lệnh để cài skill và tự đăng ký MCP cấu hình — không cần nhập token ở bước cài.*
 
 </div>
 
@@ -51,8 +51,8 @@ npx github:ResearchPulse/slr_skill_open_science
 | Thành phần | Yêu cầu | Ghi chú |
 | --- | --- | --- |
 | Node.js | ≥ 20 | Cần cho package và MCP runtime |
-| Open-Science CLI | Bản tương thích | Installer dùng CLI để tạo Credential và đăng ký connector |
-| SLR Agent token | Token của reviewer/project | Được lưu trong Credential `SLR_AGENT_TOKEN` |
+| Open-Science CLI | Bản tương thích | Installer dùng CLI để đăng ký connector; Credential được tạo khi cấu hình token project |
+| SLR Agent token | Cấu hình sau trong từng project | Được lưu trong Credential mã hóa `SLR_AGENT_TOKEN` |
 
 ## 🚀 Cài đặt
 
@@ -64,17 +64,27 @@ Chạy trong PowerShell hoặc terminal có Node.js:
 npx github:ResearchPulse/slr_skill_open_science
 ```
 
-Installer sẽ hướng dẫn cấu hình project, kiểm tra API, lưu token vào Credential `SLR_AGENT_TOKEN`, cài skill vào `~/.agents/skills/slr`, rồi đăng ký và bật hai connector `slr-default` và `slr-config`. Nếu Open-Science daemon chưa chạy, installer sẽ thử khởi động daemon.
+Installer cài skill vào `~/.agents/skills/slr`, tạo profile mặc định và tự đăng ký/bật connector cấu hình `slr-config`. Installer không hỏi project token và không tạo review connector ở bước này. Với mỗi project, mở conversation Open-Science mới rồi chạy `/slr config token <TOKEN>`; connector sẽ kiểm tra token, lưu Credential mã hóa `SLR_AGENT_TOKEN`, cập nhật profile và đăng ký/bật cả connector review lẫn connector cấu hình. Nếu Open-Science daemon chưa chạy, installer sẽ thử khởi động daemon.
+
+Kết quả cài đặt khi chưa cấu hình project:
+
+```text
+SLR skill installed · profile default
+Config connector: enabled (slr-config)
+Skill: installed
+Next: Open-Science → New conversation → /slr config token <TOKEN>
+```
 
 Sau khi cài đặt:
 
 1. Mở cuộc hội thoại Open-Science mới.
 2. Bật skill `/slr` trong Settings → Skills nếu chưa được bật tự động.
-3. Chạy `/slr setup` để kiểm tra kết nối chỉ đọc.
+3. Chạy `/slr config token <TOKEN>` để cấu hình token cho project cần review.
+4. Mở conversation mới rồi chạy `/slr setup` để kiểm tra kết nối chỉ đọc.
 
 ### Báo cáo không tương tác
 
-`--json` in báo cáo máy đọc được và không yêu cầu token:
+`--json` in báo cáo máy đọc được; lệnh cài đặt không yêu cầu token ở cả chế độ tương tác lẫn không tương tác:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science --json
@@ -89,14 +99,13 @@ npx github:ResearchPulse/slr_skill_open_science profile create `
   --name afl-review `
   --api-base-url https://slr-api.hyperdatalab.org/api `
   --project-id <project-id> `
-  --project-name "AFL review" `
-  --credential-id <credential-id>
+  --project-name "AFL review"
 
 npx github:ResearchPulse/slr_skill_open_science workspace init --profile afl-review
 npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review
 ```
 
-Setup cần Open-Science CLI và Credential `SLR_AGENT_TOKEN`. Nếu đăng ký connector hoặc gắn Credential thất bại, installer dừng và báo lỗi; không có bước import connector thủ công.
+Setup cần Open-Science CLI để tự đăng ký `slr-config`. Nếu đăng ký connector thất bại, installer dừng và báo lỗi; không có bước import connector thủ công. Credential và review connector sẽ được tạo tự động khi cấu hình token project bằng `/slr config token <TOKEN>`.
 
 ### Kiểm tra cài đặt
 
@@ -165,7 +174,7 @@ npx github:ResearchPulse/slr_skill_open_science workspace init --profile <profil
 npx github:ResearchPulse/slr_skill_open_science setup --profile <profile-name>
 ```
 
-Setup quản lý runtime, skill, Credential và connector. `--json` dùng cho báo cáo không tương tác. Xem hướng dẫn đầy đủ trong [SLR MCP Open-Science setup](docs/SLR_MCP_OPEN_SCIENCE_SETUP.md).
+Setup quản lý runtime, skill, profile và connector cấu hình mà không cần project token. Sau đó dùng `/slr config token <TOKEN>` để gắn Credential cho project và bật connector review. `--json` dùng cho báo cáo không tương tác. Xem hướng dẫn đầy đủ trong [SLR MCP Open-Science setup](docs/SLR_MCP_OPEN_SCIENCE_SETUP.md).
 
 ## 🩺 Xử lý sự cố
 

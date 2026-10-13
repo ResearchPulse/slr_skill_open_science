@@ -23,7 +23,7 @@ The package intentionally has two MCP processes with separate responsibilities:
   -> slr_config_cancel
 ```
 
-The config process is local-only. It reads `SLR_AGENT_TOKEN` from the encrypted host Credential binding, stages validation before commit, and writes only local profile/connector state. The review process remains unchanged and the backend repository is not modified.
+The config process is local-only. It can be installed without a Credential so `/slr config token <TOKEN>` can establish the first project connection. It validates the token, stores it in the encrypted host Credential, and writes only local profile/connector state. The review process requires the bound token and the backend repository is not modified.
 
 ## Approved decisions
 
@@ -36,13 +36,14 @@ The config process is local-only. It reads `SLR_AGENT_TOKEN` from the encrypted 
 | Profiles | Multi-project profiles | A user can manage multiple SLR projects without mixing tokens |
 | Drafts | Local `paper-review/` workspace | Keeps draft/edit/submit workflow auditable and recoverable |
 | Submission safety | One user confirmation plus an internal digest-bound MCP handshake | The skill prepares the exact payload, asks once, then performs the matching confirmed call immediately before the backend write |
-| Credential priority | Secret-free selected profile metadata plus mandatory host-managed `SLR_AGENT_TOKEN` | Keeps project secrets inside Open-Science Credential storage |
+| Credential priority | Optional during installation; mandatory host-managed `SLR_AGENT_TOKEN` for review | Lets users install once and configure a project-specific token later |
 
 ## Goals
 
 - Install or update the skill and connector with one `npx github:ResearchPulse/slr_skill_open_science` command.
-- Automatically register and enable both Open-Science local connectors when the Open-Science CLI is available.
-- Fail closed when connector registration or credential binding is unavailable; no manual connector-import path is supported.
+- Automatically register and enable `slr-config` during installation without asking for a project token.
+- Register and enable both connectors after `/slr config token <TOKEN>` validates and binds the project token.
+- Fail closed when required connector registration or credential binding is unavailable; no manual connector-import path is supported.
 - Expose only `list_assigned_tasks`, `connection_test`, `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
 - Support the Claude-compatible `/slr` command surface: setup, status, list/tasks, task, fulltext, review, drafts, edit, submit, auto, mcp, diag, config subcommands, and help; `doctor` remains a root CLI command.
 - Preserve the project-scoped bearer-token API contract without changing backend routes.
@@ -88,9 +89,9 @@ The installer is intentionally small and cross-platform:
 
 1. Detect the current package directory and the Open-Science CLI.
 2. Copy or update the `/slr` skill through the supported local skill/import path.
-3. Prompt for the API URL and project token through hidden terminal input, then bind the token to the encrypted Open-Science `SLR_AGENT_TOKEN` Credential without writing it to the profile.
-4. Run a read-only API connection check without exposing the token.
-5. Register and enable both Open-Science connectors; if unavailable, stop with a deterministic failure.
+3. Create or update secret-free API/profile metadata without requesting a token.
+4. Register and enable the local config connector.
+5. After the user supplies a project token through `/slr config token`, validate it, bind the encrypted `SLR_AGENT_TOKEN` Credential, and register/enable both connectors.
 6. Use the selected profile when starting the root MCP launcher.
 
 The installer must never put a raw token in command-line arguments, generated skill content, printed configuration, profile metadata, ordinary JSON files, drafts, audit records, or chat. The only token authority is the host-managed encrypted `SLR_AGENT_TOKEN` Credential injected into the connectors.
@@ -106,7 +107,7 @@ The CLI provides the Claude-style operational layer without adding MCP tools:
 - MCP configuration output;
 - package/skill update and uninstall.
 
-The CLI uses `open-science connector` commands. Before registration it checks the daemon and starts it with `open-science start --no-open` when needed, so the desktop window does not have to be opened manually. Registration is atomic across the review and config connectors; any list/add/update/enable failure stops setup and does not activate the profile.
+The CLI uses `open-science connector` commands. Before registration it checks the daemon and starts it with `open-science start --no-open` when needed, so the desktop window does not have to be opened manually. Initial installation enables only the config connector. After token configuration, registration is atomic across the review and config connectors; any list/add/update/enable failure stops activation of the project profile.
 
 ### MCP server
 
@@ -129,9 +130,9 @@ Each profile represents one SLR project/agent connection:
 ```text
 profile name
 ├── api base URL
-├── mandatory Open-Science credential ID
+├── optional Open-Science credential ID (required for review)
 ├── connector ID/name
-└── credential fingerprint plus host credential binding ID
+└── credential fingerprint when configured
 ```
 
 Changing the active profile must not silently change a long-running connector. The user must reconnect or restart the connector so the selected profile becomes active. The selected profile and project must be shown before review or submission.

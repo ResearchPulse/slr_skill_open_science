@@ -388,7 +388,6 @@ export function registerConfigConnector(
   ensureDaemon = ensureOpenScienceDaemon,
   runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
 ) {
-  if (!credentialId) return { registered: false, reason: 'credential-binding-missing' };
   return registerConnectorDefinition(configConnectorConfig(credentialId, runtimePackageRoot), report, run, ensureDaemon);
 }
 
@@ -479,7 +478,7 @@ Usage:
   npx github:ResearchPulse/slr_skill_open_science [command]
 
 Commands:
-  setup     Interactive setup: copy skill, save URL/token, test API, register MCP
+  setup     Install the skill and config connector without asking for a token
   install   Alias for setup
   profile   Manage project profiles (create, list, use, inspect, remove)
   workspace Initialize or inspect the local review workspace
@@ -511,8 +510,9 @@ Setup flags:
   --no-register skip connector registration
 
 Credentials:
-  Setup asks for the token with hidden terminal input, binds it to the
-  Open-Science credential named SLR_AGENT_TOKEN, and never stores it locally.
+  Setup never asks for a project token. In a new Open-Science conversation,
+  configure each project's token with /slr config token <TOKEN>. The token is
+  bound to the encrypted SLR_AGENT_TOKEN credential and never stored locally.
   The config MCP validates and commits profile changes inside one connected
   session; tokens never appear in profile metadata or connector JSON.`);
 }
@@ -568,18 +568,28 @@ function printSetup(report, asJson, setup = {}) {
       configRegistration: setup.configRegistration || null,
       nextSteps: [
         'Open a new Open-Science conversation so the updated /slr skill is loaded.',
-        'Run /slr setup to verify the read-only MCP connection.',
-        'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.',
+        ...(setup.tokenConfigured
+          ? ['Run /slr setup to verify the read-only MCP connection.', 'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.']
+          : ['Run /slr config token <TOKEN> to bind the project credential and enable the review connector.']),
       ],
     }, null, 2));
     return;
   }
 
-  if (setup.connection?.connected) {
+  if (!setup.tokenConfigured && setup.configRegistration?.registered && setup.configRegistration?.enabled) {
+    console.log(`SLR skill installed${setup.profile?.name ? ` · profile ${setup.profile.name}` : ''}`);
+    console.log('Config connector: enabled (slr-config)');
+    if (setup.skill?.status) console.log('Skill: ' + setup.skill.status);
+    console.log('Next: Open-Science → New conversation → /slr config token <TOKEN>');
+    return;
+  } else if (setup.connection?.connected) {
     console.log(`SLR ready${setup.connection.projectName ? ` · ${setup.connection.projectName}` : ''} · ${setup.connection.assignedTasks ?? 0} assigned tasks`);
   } else if (setup.connection) {
     console.log('SLR setup incomplete');
     console.log(`API: failed (${setup.connection.code || 'unknown'})`);
+  } else if (setup.tokenConfigured) {
+    console.log('SLR connectors ready');
+    console.log('API: not checked; run /slr setup');
   } else {
     console.log('SLR setup incomplete');
     console.log('API: not tested');
@@ -587,10 +597,10 @@ function printSetup(report, asJson, setup = {}) {
   if (setup.credentialBinding?.configured) console.log('Credential: bound to SLR_AGENT_TOKEN');
   const reviewReady = setup.registration?.registered === true && setup.registration?.enabled === true;
   const configReady = setup.configRegistration?.registered === true && setup.configRegistration?.enabled === true;
-  if (reviewReady && configReady) console.log('Connectors: enabled (slr-default, slr-config)');
+  if (setup.tokenConfigured && reviewReady && configReady) console.log('Connectors: enabled (slr-default, slr-config)');
   else console.log(`Connector setup failed (${setup.registration?.reason || setup.configRegistration?.reason || 'unknown'})`);
   if (setup.skill?.status) console.log('Skill: ' + setup.skill.status);
-  console.log('Next: Open-Science → New conversation → /slr setup');
+  if (setup.tokenConfigured) console.log('Next: Open-Science → New conversation → /slr setup');
 }
 
 function runProfileCommand(args, asJson) {
@@ -693,16 +703,15 @@ export async function main(args = process.argv.slice(2), options = {}) {
     const profileStoreSnapshot = captureProfileStore(process.env);
     try {
       const options = profileOptions(args);
-    const interactive = !asJson && Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const setup = await prepareProfile({
       name: options.name,
       apiBaseUrl: options.apiBaseUrl,
-      interactive,
     });
     let profile = setup.profile;
+    const hasCredential = Boolean(setup.token || profile?.credentialId);
     const skill = installSkill(packageRoot, flagValue(args, '--skill-dir'));
     if (profile && hasFlag(args, '--workspace')) initializeWorkspace(profile);
-    const connection = profile ? await testProfileConnection(profile, setup.token) : null;
+    const connection = profile && setup.token ? await testProfileConnection(profile, setup.token) : null;
     if (profile && connection?.connected && (connection.projectId || connection.projectName)) {
       profile = updateProfile(profile.name, {
         projectId: connection.projectId,
@@ -718,21 +727,25 @@ export async function main(args = process.argv.slice(2), options = {}) {
         credentialFingerprint: tokenFingerprint(setup.token),
       });
     }
-    const runtimePackageRoot = profile && setup.token && !hasFlag(args, '--no-register') && credentialBinding?.configured
+    const runtimePackageRoot = profile && !hasFlag(args, '--no-register')
       ? ensureRuntime(packageRoot).packageRoot
       : null;
-    const registration = profile && !hasFlag(args, '--no-register')
-      ? (credentialBinding?.configured ? registerConnector(profile, report, openScienceCommand, ensureOpenScienceDaemon, runtimePackageRoot) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
+    const registration = profile && hasCredential && !hasFlag(args, '--no-register')
+      ? (credentialBinding?.configured || profile.credentialId
+        ? registerConnector(profile, report, openScienceCommand, ensureOpenScienceDaemon, runtimePackageRoot)
+        : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
       : null;
-    const configRegistration = !hasFlag(args, '--no-register')
-      ? (credentialBinding?.configured ? registerConfigConnector(credentialBinding.credentialId, report, openScienceCommand, ensureOpenScienceDaemon, runtimePackageRoot) : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
+    const configRegistration = profile && !hasFlag(args, '--no-register')
+      ? (!setup.token || credentialBinding?.configured
+        ? registerConfigConnector(credentialBinding?.credentialId || profile?.credentialId, report, openScienceCommand, ensureOpenScienceDaemon, runtimePackageRoot)
+        : { registered: false, reason: credentialBinding?.reason || 'credential-binding-missing' })
       : null;
     const value = {
       command: 'setup',
-      mode: profile && setup.token ? 'configured' : 'incomplete',
+      mode: profile && hasCredential ? 'configured' : 'installed',
       ...report,
       profile: profile || null,
-      connector: profile && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null,
+      connector: profile && hasCredential && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null,
       connection,
       credentialBinding,
       registration,
@@ -740,12 +753,15 @@ export async function main(args = process.argv.slice(2), options = {}) {
       skill,
       nextSteps: [
         'Open a new Open-Science conversation so the updated /slr skill is loaded.',
-        'Run /slr setup before reviewing a paper.',
-        'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.',
+        ...(hasCredential
+          ? ['Run /slr setup before reviewing a paper.', 'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.']
+          : ['Run /slr config token <TOKEN> to bind the project credential and enable the review connector.']),
       ],
     };
-    const connectorsReady = registration?.registered === true && registration?.enabled === true
-      && configRegistration?.registered === true && configRegistration?.enabled === true;
+    const connectorsReady = hasCredential
+      ? registration?.registered === true && registration?.enabled === true
+        && configRegistration?.registered === true && configRegistration?.enabled === true
+      : configRegistration?.registered === true && configRegistration?.enabled === true;
     if (!hasFlag(args, '--no-register') && !connectorsReady) process.exitCode = 1;
     if (!hasFlag(args, '--no-register') && !connectorsReady) {
       restoreProfileStore(profileStoreSnapshot, process.env);
@@ -753,12 +769,12 @@ export async function main(args = process.argv.slice(2), options = {}) {
     } else if (connectorsReady && profile) {
       profile = useProfile(profile.name);
     }
-    value.mode = profile && setup.token ? 'configured' : 'incomplete';
+    value.mode = profile && connectorsReady ? (hasCredential ? 'configured' : 'installed') : 'incomplete';
     value.profile = profile || null;
-    value.connector = profile && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null;
+    value.connector = profile && hasCredential && runtimePackageRoot ? connectorConfig(profile, runtimePackageRoot) : null;
     if (asJson) printValue(value, true);
     else {
-      printSetup(report, false, { profile, connection, credentialBinding, registration, configRegistration, skill });
+      printSetup(report, false, { profile, connection, credentialBinding, registration, configRegistration, skill, tokenConfigured: hasCredential });
     }
       return;
     } catch (error) {

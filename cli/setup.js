@@ -1,4 +1,3 @@
-import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import {
   createProfile,
@@ -17,72 +16,6 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_API_BASE_URL = 'https://slr-api.hyperdatalab.org/api';
 const pendingConfigurations = new Map();
 
-function hasInteractiveTerminal() {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
-}
-
-function promptText(label, current = '') {
-  if (!hasInteractiveTerminal()) return Promise.resolve(undefined);
-  const suffix = current ? ` [${current}]` : '';
-  const input = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve, reject) => {
-    input.question(`${label}${suffix}: `, answer => {
-      input.close();
-      resolve(answer.trim() || current || undefined);
-    });
-    input.on('SIGINT', () => {
-      input.close();
-      reject(new Error('setup cancelled'));
-    });
-  });
-}
-
-function promptHidden(label, hasCurrent) {
-  if (!hasInteractiveTerminal()) return Promise.resolve(undefined);
-  const input = process.stdin;
-  const output = process.stdout;
-  return new Promise((resolve, reject) => {
-    let value = '';
-    const previousRawMode = input.isRaw;
-    const onData = chunk => {
-      const text = String(chunk);
-      for (const character of text) {
-        if (character === '\u0003') {
-          cleanup();
-          reject(new Error('setup cancelled'));
-          return;
-        }
-        if (character === '\r' || character === '\n') {
-          cleanup();
-          output.write('\n');
-          resolve(value.trim() || undefined);
-          return;
-        }
-        if (character === '\u007f' || character === '\b') {
-          if (value) {
-            value = value.slice(0, -1);
-            output.write('\b \b');
-          }
-          continue;
-        }
-        if (character >= ' ') {
-          value += character;
-          output.write('*');
-        }
-      }
-    };
-    const cleanup = () => {
-      input.off('data', onData);
-      try { input.setRawMode(Boolean(previousRawMode)); } catch { /* non-TTY fallback */ }
-      input.pause();
-    };
-    output.write(`${label}${hasCurrent ? ' (Enter to keep current)' : ''}: `);
-    input.resume();
-    try { input.setRawMode(true); } catch { cleanup(); reject(new Error('hidden token input requires a TTY')); return; }
-    input.on('data', onData);
-  });
-}
-
 function existingProfile(name, environment) {
   if (!name) return getActiveProfile(environment);
   try { return getProfile(name, environment); } catch (error) {
@@ -91,7 +24,7 @@ function existingProfile(name, environment) {
   }
 }
 
-export async function prepareProfile({ name, apiBaseUrl, interactive = hasInteractiveTerminal(), environment = globalThis.process['env'] } = {}) {
+export async function prepareProfile({ name, apiBaseUrl, environment = globalThis.process['env'] } = {}) {
   const profileName = name || getActiveProfile(environment)?.name || 'default';
   let profile = existingProfile(profileName, environment);
   const url = apiBaseUrl || profile?.apiBaseUrl || DEFAULT_API_BASE_URL;
@@ -101,11 +34,7 @@ export async function prepareProfile({ name, apiBaseUrl, interactive = hasIntera
     ? updateProfile(profile.name, { apiBaseUrl: url }, environment)
     : createProfile({ name: profileName, apiBaseUrl: url, activate: false }, environment);
 
-  let token = null;
-  if (interactive) {
-    token = await promptHidden('Agent token', false);
-  }
-  return { profile, token, skipped: false };
+  return { profile, token: null, skipped: false };
 }
 
 export async function testProfileConnection(profile, token) {
