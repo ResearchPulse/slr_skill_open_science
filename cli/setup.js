@@ -222,6 +222,23 @@ export function assertTokenConfigurationCredential(
   return { ok: true, operationId: operationIdFromInput(operationId) };
 }
 
+export function tokenConfigurationTargetProfileName(
+  operationIdInput,
+  selectedProfileName = undefined,
+  environment = globalThis.process['env'],
+) {
+  const { metadata } = readPendingConfig(operationIdInput, environment);
+  const candidates = Array.isArray(metadata.match?.profiles) ? metadata.match.profiles : [];
+  if (candidates.length > 1 && !selectedProfileName) {
+    throw new Error('configuration matches multiple profiles; choose one with --profile');
+  }
+  const targetName = selectedProfileName || candidates[0]?.name || metadata.profileName;
+  if (candidates.length > 0 && !candidates.some(profile => profile.name === targetName)) {
+    throw new Error('selected profile is not one of the matched profiles');
+  }
+  return targetName;
+}
+
 export function commitTokenConfiguration(
   operationId,
   action,
@@ -245,14 +262,8 @@ export function commitTokenConfiguration(
     throw new Error(`configuration action must be ${expectedAction} for this operation`);
   }
 
+  const targetName = tokenConfigurationTargetProfileName(operationId, selectedProfileName, environment);
   const candidates = Array.isArray(metadata.match?.profiles) ? metadata.match.profiles : [];
-  if (candidates.length > 1 && !selectedProfileName) {
-    throw new Error('configuration matches multiple profiles; choose one with --profile');
-  }
-  const targetName = selectedProfileName || candidates[0]?.name || metadata.profileName;
-  if (candidates.length > 0 && !candidates.some(profile => profile.name === targetName)) {
-    throw new Error('selected profile is not one of the matched profiles');
-  }
   const existingProfile = (() => {
     try { return getProfile(targetName, environment); } catch (error) {
       if (/profile not found/i.test(error instanceof Error ? error.message : '') && candidates.length === 0) return null;

@@ -11,10 +11,12 @@ import {
   finalizeTokenConfiguration,
   listProfiles,
   openScienceReport,
+  projectTokenCredentialName,
   registerConfigConnector,
   registerConnector,
   restoreProfileStore,
   tokenFingerprint,
+  tokenConfigurationTargetProfileName,
 } from './bridge.js';
 import {
   cancelSchema,
@@ -90,7 +92,12 @@ function completeConfiguration({
       assertTokenConfigurationCredential(operationId, tokenFingerprint(token), env);
     }
     const report = registrationReport();
-    const credentialBinding = ensureOpenScienceCredential(token, report);
+    const candidateProfileName = tokenConfigurationTargetProfileName(operationId, profileName, env);
+    const credentialBinding = ensureOpenScienceCredential(
+      token,
+      report,
+      projectTokenCredentialName(candidateProfileName),
+    );
     if (credentialBinding.configured !== true || !credentialBinding.credentialId) {
       try { cancelTokenConfiguration(operationId, env); } catch { /* Preserve the safe error. */ }
       return errorResult('CREDENTIAL_BINDING_FAILED', `Unable to bind SLR_AGENT_TOKEN (${credentialBinding.reason || 'unknown error'}).`, {

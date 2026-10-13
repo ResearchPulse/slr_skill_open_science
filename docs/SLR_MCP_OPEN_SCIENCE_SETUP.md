@@ -7,7 +7,7 @@ Tài liệu này hướng dẫn kết nối một project SLR với Open-Science
 1. Mở project SLR và vào **Settings → AI Agents**.
 2. Chọn **ChatGPT — Open-Science**.
 3. Bấm **Connect and generate project token**.
-4. Giữ project token để cấu hình sau khi cài bằng `/slr config token <TOKEN>`. Mỗi project dùng token riêng. Token sẽ được lưu trong Open-Science Credential mã hóa `SLR_AGENT_TOKEN`; không dán token vào file cấu hình.
+4. Dùng project token được cấp cho agent/project này. Đây là token duy nhất API dùng để nhận diện đúng agent và project, đồng thời xác định task được phép truy cập. Open-Science Credential `SLR_AGENT_TOKEN` chỉ là nơi lưu và cấp cùng token đó cho MCP.
 5. Chọn paper và bấm **Assign to ChatGPT**.
 
 Token này chỉ có scope trên agent/project đó. Không dán token vào chat, skill, source code, issue, screenshot hoặc log. Nếu token đã bị lộ, dùng **Rotate** trong SLR rồi cập nhật connector local.
@@ -35,21 +35,21 @@ Current connector model:
 
 - `slr-agent-mcp` is the review connector and exposes the five Claude-compatible business tools, including bounded `connection_test`.
 - `slr-config-mcp` is a separate local connector used only by `/slr config`.
-- After initial installation, the config connector can start without a Credential so the user can configure a project. Only the explicit `/slr config token <TOKEN>` operation accepts a token argument; it validates and binds it immediately and never returns it.
+- Interactive installation optionally prompts for the project token with hidden input; Enter skips it. The same token identifies the agent/project to the SLR API. Open-Science's encrypted Credential is only the host storage/binding for that value, not another token.
 
-The installer stages a dependency-complete runtime under `~/.slr/runtimes/<fingerprint>` and automatically registers the `slr-config` connector without asking for a project token. This lets the user install the skill before choosing a project. After running `/slr config token <TOKEN>` in a new Open-Science conversation, the config connector validates the token, binds the encrypted `SLR_AGENT_TOKEN` Credential, and automatically registers/enables both connectors. The review connector is not registered until a project token is configured. There is no manual-import fallback.
+The installer stages a dependency-complete runtime under `~/.slr/runtimes/<fingerprint>` and registers the config connector. In an interactive terminal, it asks for the project token if the selected profile has none; pressing Enter skips token setup. A supplied token is checked against the SLR API first, which returns the agent/project identity, then bound as the host-managed `SLR_AGENT_TOKEN` Credential and used to register/enable both connectors. The same configuration can be done later with `/slr config token <TOKEN>`. There is no manual-import fallback.
 
 ```text
 Command: <Node executable>
 Arguments: <managed runtime>/bin/install.js --config-mcp
-Initial install: no Credential binding. `/slr config token` adds it later.
+Initial install without a token: config connector only. Supplying the project token or running `/slr config token` binds that same token and enables the review connector.
 ```
 
-The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, creates the local profile metadata and registers/enables the `slr-config` connector. It does not ask for or test a project token. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
+The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, creates local profile metadata and registers the config connector. In an interactive terminal it asks for the project token if one is not already bound; Enter skips this so the token can be configured later. A supplied token is validated before it is stored by Open-Science and used to enable the review connector. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
 
 Use `--json` for a non-interactive report. If automatic config-connector registration is unavailable, setup reports the failure and exits non-zero. After the skill and config connector are available, open a new Open-Science conversation and run `/slr config token <TOKEN>` for the project you want to use. When it succeeds, open a new conversation and run `/slr setup` to perform the read-only connection check.
 
-`setup` không hỏi token và không gọi API của project. Lệnh cài skill, tạo profile metadata không chứa bí mật và đăng ký connector `slr-config`. Sau đó cấu hình token cho từng project bằng `/slr config token <TOKEN>` trong Open-Science; connector sẽ kiểm tra token, lưu Credential mã hóa và đăng ký cả hai connector. Dùng `--json` để in báo cáo máy đọc được:
+`setup` ở terminal tương tác sẽ hỏi project token nếu profile chưa có token; nhấn Enter để cấu hình sau bằng `/slr config token <TOKEN>`. Token được kiểm tra với API trước khi Open-Science lưu và cấp nó cho connector. Cùng một token nhận diện agent/project; Credential chỉ là nơi lưu trữ của Open-Science. Dùng `--json` để in báo cáo máy đọc được; chế độ này không hỏi token:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science --json
@@ -59,7 +59,7 @@ npx github:ResearchPulse/slr_skill_open_science --json
 
 Sau khi bật skill, mở conversation mới và cấu hình project bằng `/slr config token <TOKEN>`. Lệnh này dùng connector `slr-config` đã được cài tự động; không cần cấu hình token ở bước cài package. Sau khi connector báo cần kết nối lại, mở conversation mới rồi chạy `/slr setup` để kiểm tra read-only. Skill không tự thay đổi Settings của Open-Science.
 
-`/slr config token <TOKEN>` là đường dẫn duy nhất để đưa token vào config MCP. Tool kiểm tra token trước khi thay đổi profile, lưu token vào Credential host-managed và không trả lại token. Token không được ghi vào profile metadata hoặc connector JSON. Mỗi project có thể dùng profile/token riêng. Nếu token đã lỡ xuất hiện ngoài luồng cấu hình, hãy rotate token trong SLR.
+Token có thể được nhập ẩn ở bước cài đặt tương tác hoặc cấu hình sau bằng `/slr config token <TOKEN>`. Cả hai đường đều kiểm tra project token với API trước khi thay đổi profile, rồi lưu/cấp chính token đó qua Open-Science Credential `SLR_AGENT_TOKEN`. Mỗi profile/project có token và Credential riêng; Credential là cách Open-Science lưu token, không phải token thứ hai. Token thô không được ghi vào profile metadata hoặc connector JSON.
 
 Dùng `doctor` để kiểm tra asset đã được đóng gói và khả năng có `open-science` CLI:
 
@@ -67,7 +67,7 @@ Dùng `doctor` để kiểm tra asset đã được đóng gói và khả năng 
 npx github:ResearchPulse/slr_skill_open_science doctor
 ```
 
-`doctor` luôn in report dạng JSON. Lệnh trả về non-zero nếu thiếu asset của package; việc không tìm thấy `open-science` CLI chỉ được ghi nhận trong report, không tự nó làm package check thất bại. Cả `setup` và `doctor` đều không yêu cầu hoặc in project token.
+`doctor` luôn in report dạng JSON. Lệnh trả về non-zero nếu thiếu asset của package; việc không tìm thấy `open-science` CLI chỉ được ghi nhận trong report, không tự nó làm package check thất bại. `doctor` không yêu cầu hoặc in project token; `setup --json` cũng không hỏi token.
 
 Tạo profile metadata (không cần dán token vào terminal):
 
@@ -85,7 +85,7 @@ Khởi tạo workspace cho profile metadata:
 npx github:ResearchPulse/slr_skill_open_science workspace init --profile afl-review
 ```
 
-Profile metadata không chứa project token. Không có JSON connector để import thủ công. Lệnh setup package đăng ký `slr-config`; sau khi token được cấu hình trong chat, config MCP bind `SLR_AGENT_TOKEN` và đăng ký cả hai connector.
+Profile metadata không chứa project token. Không có JSON connector để import thủ công. Lệnh setup đăng ký connector cấu hình; khi token được nhập lúc cài hoặc cấu hình sau trong chat, installer/config MCP xác thực và bind cùng project token vào `SLR_AGENT_TOKEN`, rồi đăng ký cả hai connector.
 
 Có thể tạo profile metadata riêng trước khi kết nối project:
 
@@ -94,7 +94,7 @@ npx github:ResearchPulse/slr_skill_open_science setup `
   --profile afl-review
 ```
 
-Automatic registration requires a compatible `open-science` CLI; setup starts its daemon when necessary. Cài package không cần Credential. Cấu hình từng project bằng `/slr config token <TOKEN>`; thao tác này tạo/cập nhật Credential và bật review connector.
+Automatic registration requires a compatible `open-science` CLI; setup starts its daemon when necessary. Với terminal tương tác, nhập project token khi được hỏi hoặc nhấn Enter để bỏ qua. Có thể cấu hình token sau bằng `/slr config token <TOKEN>`; hai cách đều dùng một project token và tự bật review connector.
 
 Nếu đăng ký `slr-config` không khả dụng, setup dừng với mã lỗi. Hãy sửa/reconnect Open-Science rồi chạy lại; không có đường dẫn import thủ công hoặc terminal fallback.
 

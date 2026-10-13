@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import readline from 'node:readline';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -67,6 +68,22 @@ function selectedProfile(args) {
 
 function printValue(value, asJson = false) {
   console.log(asJson ? JSON.stringify(value, null, 2) : JSON.stringify(value, null, 2));
+}
+
+function promptProjectToken() {
+  return new Promise(resolveToken => {
+    const prompt = 'Project token (press Enter to configure later): ';
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    rl._writeToOutput = value => {
+      if (value.includes(prompt)) rl.output.write(value);
+      else if (value === '\r\n' || value === '\n' || value === '\r') rl.output.write('\n');
+      else rl.output.write('*'.repeat(value.length));
+    };
+    rl.question(prompt, answer => {
+      rl.close();
+      resolveToken(String(answer || '').trim());
+    });
+  });
 }
 
 function connectorRuntimeArgs(runtimePackageRoot, mode, profileName = undefined) {
@@ -246,6 +263,11 @@ function connectorIdFromAddOutput(stdout) {
     || null;
 }
 
+export function projectTokenCredentialName(profileName = 'default') {
+  const name = String(profileName || 'default').trim() || 'default';
+  return name === 'default' ? SLR_CREDENTIAL_DISPLAY_NAME : `${SLR_CREDENTIAL_DISPLAY_NAME} (${name})`;
+}
+
 function credentialRecords(stdout) {
   const value = parseJsonOutput(stdout);
   if (Array.isArray(value)) return value;
@@ -267,9 +289,9 @@ function credentialFailure(result, operation) {
   return `open-science-credential-${operation}-failed${failureCode(result) ? `:${failureCode(result)}` : ''}`;
 }
 
-function existingSlrCredential(stdout) {
+function existingSlrCredential(stdout, displayName = SLR_CREDENTIAL_DISPLAY_NAME) {
   const credentials = credentialRecords(stdout).filter(credential => credential?.kind === 'token');
-  return credentials.find(credential => credential.displayName === SLR_CREDENTIAL_DISPLAY_NAME) || null;
+  return credentials.find(credential => credential.displayName === displayName) || null;
 }
 
 export function ensureOpenScienceCredential(
@@ -277,6 +299,7 @@ export function ensureOpenScienceCredential(
   report,
   run = openScienceCommand,
   ensureDaemon = ensureOpenScienceDaemon,
+  displayName = SLR_CREDENTIAL_DISPLAY_NAME,
 ) {
   if (!token) return { configured: false, reason: 'token-missing' };
   if (!report.openScienceCli.available || !report.openScienceCli.executable) {
@@ -297,13 +320,13 @@ export function ensureOpenScienceCredential(
     return { configured: false, reason: 'open-science-credential-list-failed:invalid_json' };
   }
 
-  const existing = existingSlrCredential(listed.stdout);
+  const existing = existingSlrCredential(listed.stdout, displayName);
   const operation = existing ? 'update' : 'add';
   const args = existing
     ? ['credential', 'update', existing.id, '--json']
     : ['credential', 'add', '--json'];
   const input = `${JSON.stringify({
-    displayName: SLR_CREDENTIAL_DISPLAY_NAME,
+    displayName,
     ...(existing ? {} : { kind: 'token' }),
     secret: token,
   })}\n`;
@@ -317,7 +340,7 @@ export function ensureOpenScienceCredential(
   return {
     configured: true,
     credentialId,
-    displayName: SLR_CREDENTIAL_DISPLAY_NAME,
+    displayName,
     created: !existing,
     updated: Boolean(existing),
   };
@@ -494,7 +517,7 @@ Usage:
   npx github:ResearchPulse/slr_skill_open_science [command]
 
 Commands:
-  setup     Install the skill and config connector without asking for a token
+  setup     Install the skill and connectors; optionally enter the project token
   install   Alias for setup
   profile   Manage project profiles (create, list, use, inspect, remove)
   workspace Initialize or inspect the local review workspace
@@ -525,12 +548,13 @@ Setup flags:
   --register   force connector registration (setup attempts it by default)
   --no-register skip connector registration
 
-Credentials:
-  Setup never asks for a project token. In a new Open-Science conversation,
-  configure each project's token with /slr config token <TOKEN>. The token is
-  bound to the encrypted SLR_AGENT_TOKEN credential and never stored locally.
-  The config MCP validates and commits profile changes inside one connected
-  session; tokens never appear in profile metadata or connector JSON.`);
+Project token:
+  Interactive setup asks once (input is hidden); press Enter to configure later
+  with /slr config token <TOKEN>. The same project token identifies the agent
+  and project to the SLR API. Open-Science stores that value in its encrypted
+  SLR_AGENT_TOKEN credential and passes it to the MCP; this is storage/binding
+  for the same token, not a second token. Raw token is never stored in profile
+  metadata or connector JSON.`);
 }
 
 function runMcpCommand(args, asJson, report, packageRoot) {
@@ -610,7 +634,7 @@ function printSetup(report, asJson, setup = {}) {
     console.log('SLR setup incomplete');
     console.log('API: not tested');
   }
-  if (setup.credentialBinding?.configured) console.log('Credential: bound to SLR_AGENT_TOKEN');
+  if (setup.credentialBinding?.configured) console.log('Project token: validated and connected');
   const reviewReady = setup.registration?.registered === true && setup.registration?.enabled === true;
   const configReady = setup.configRegistration?.registered === true && setup.configRegistration?.enabled === true;
   if (setup.tokenConfigured && reviewReady && configReady) console.log('Connectors: enabled (slr-default, slr-config)');
@@ -719,10 +743,16 @@ export async function main(args = process.argv.slice(2), options = {}) {
     const profileStoreSnapshot = captureProfileStore(process.env);
     try {
       const options = profileOptions(args);
-    const setup = await prepareProfile({
-      name: options.name,
-      apiBaseUrl: options.apiBaseUrl,
-    });
+      const setup = await prepareProfile({
+        name: options.name,
+        apiBaseUrl: options.apiBaseUrl,
+      });
+      const canPrompt = !asJson && !hasFlag(args, '--yes')
+        && process.stdin.isTTY && process.stdout.isTTY;
+      if (canPrompt && !hasFlag(args, '--no-register') && setup.profile && !setup.profile.credentialId) {
+        const token = await promptProjectToken();
+        if (token) setup.token = token;
+      }
     let profile = setup.profile;
     const hasCredential = Boolean(setup.token || profile?.credentialId);
     const skill = installSkill(packageRoot, flagValue(args, '--skill-dir'));
@@ -735,7 +765,9 @@ export async function main(args = process.argv.slice(2), options = {}) {
       });
     }
     const credentialBinding = profile && setup.token && !hasFlag(args, '--no-register')
-      ? ensureOpenScienceCredential(setup.token, report)
+      ? (connection?.connected
+        ? ensureOpenScienceCredential(setup.token, report, openScienceCommand, ensureOpenScienceDaemon, projectTokenCredentialName(profile.name))
+        : { configured: false, reason: `project-token-validation-failed:${connection?.code || 'unknown'}` })
       : null;
     if (profile && credentialBinding?.configured) {
       profile = updateProfile(profile.name, {

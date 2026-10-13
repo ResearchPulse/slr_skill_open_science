@@ -43,6 +43,7 @@ type SetupApi = {
   }): Promise<Record<string, unknown>>;
   cancelTokenConfiguration(operationId: string, environment: ConfigEnvironment): Record<string, unknown>;
   assertTokenConfigurationCredential(operationId: string, currentTokenFingerprint: string, environment: ConfigEnvironment): Record<string, unknown>;
+  tokenConfigurationTargetProfileName(operationId: string, selectedProfileName: string | undefined, environment: ConfigEnvironment): string;
   commitTokenConfiguration(
     operationId: string,
     action: string,
@@ -55,7 +56,8 @@ type SetupApi = {
 };
 
 type CliApi = {
-  ensureOpenScienceCredential(token: string, report: Record<string, unknown>): Record<string, unknown>;
+  ensureOpenScienceCredential(token: string, report: Record<string, unknown>, run?: undefined, ensureDaemon?: undefined, displayName?: string): Record<string, unknown>;
+  projectTokenCredentialName(profileName?: string): string;
   registerConnector(profile: PublicProfile, report: Record<string, unknown>): Record<string, unknown>;
   registerConfigConnector(
     credentialId: string | null | undefined,
@@ -113,6 +115,14 @@ export function assertTokenConfigurationCredential(
   return setup.assertTokenConfigurationCredential(operationId, currentTokenFingerprint, environment);
 }
 
+export function tokenConfigurationTargetProfileName(
+  operationId: string,
+  selectedProfileName: string | undefined,
+  environment: ConfigEnvironment,
+): string {
+  return setup.tokenConfigurationTargetProfileName(operationId, selectedProfileName, environment);
+}
+
 export function commitTokenConfiguration(
   operationId: string,
   action: string,
@@ -128,8 +138,12 @@ export function finalizeTokenConfiguration(operationId: string, environment: Con
   return setup.finalizeTokenConfiguration(operationId, environment);
 }
 
-export function ensureOpenScienceCredential(token: string, report: Record<string, unknown>): Record<string, unknown> {
-  return cli.ensureOpenScienceCredential(token, report);
+export function projectTokenCredentialName(profileName?: string): string {
+  return cli.projectTokenCredentialName(profileName);
+}
+
+export function ensureOpenScienceCredential(token: string, report: Record<string, unknown>, displayName?: string): Record<string, unknown> {
+  return cli.ensureOpenScienceCredential(token, report, undefined, undefined, displayName);
 }
 
 export function registerConnector(profile: PublicProfile, report: Record<string, unknown>): Record<string, unknown> {

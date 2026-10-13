@@ -43,7 +43,7 @@ npx github:ResearchPulse/slr_skill_open_science
 - **Dùng đúng protocol**: `protocolSnapshot` tại thời điểm giao task là bộ tiêu chí chuẩn cho lần review.
 - **Khuyến nghị có dẫn chứng**: hỗ trợ `INCLUDE`, `EXCLUDE`, `UNCERTAIN` cùng reasoning và dữ liệu có cấu trúc.
 - **Xác nhận trước khi ghi**: một lần xác nhận của người dùng, sau đó MCP hoàn tất bước digest trước khi gửi kết quả.
-- **Cấu hình credential an toàn**: token nằm trong Open-Science Credential được mã hóa, không nằm trong profile metadata hay connector JSON.
+- **Một project token duy nhất**: API dùng token để nhận diện agent/project; Open-Science Credential mã hóa chỉ là nơi lưu và cấp token đó cho MCP.
 - **Hai connector chuyên biệt**: MCP review cho task và MCP config riêng cho `/slr config`.
 
 ## 🧰 Yêu cầu
@@ -52,7 +52,7 @@ npx github:ResearchPulse/slr_skill_open_science
 | --- | --- | --- |
 | Node.js | ≥ 20 | Cần cho package và MCP runtime |
 | Open-Science CLI | Bản tương thích | Bật trong Open-Science: Settings → General → Command line tool → Install command |
-| SLR Agent token | Cấu hình sau trong từng project | Được lưu trong Credential mã hóa `SLR_AGENT_TOKEN` |
+| Project token | Có thể nhập lúc cài hoặc cấu hình sau cho project cần review | Một token duy nhất nhận diện agent và project; Open-Science Credential chỉ là nơi lưu/cấp token cho MCP |
 
 ## 🚀 Cài đặt
 
@@ -73,7 +73,7 @@ open-science --help
 
 Nếu `Get-Command` không tìm thấy lệnh, installer vẫn có thể cài skill nhưng không thể tự đăng ký MCP connector.
 
-Installer cài skill vào `~/.agents/skills/slr`, tạo profile mặc định và tự đăng ký/bật connector cấu hình `slr-config`. Installer không hỏi project token và không tạo review connector ở bước này. Với mỗi project, mở conversation Open-Science mới rồi chạy `/slr config token <TOKEN>`; connector sẽ kiểm tra token, lưu Credential mã hóa `SLR_AGENT_TOKEN`, cập nhật profile và đăng ký/bật cả connector review lẫn connector cấu hình. Nếu Open-Science daemon chưa chạy, installer sẽ thử khởi động daemon.
+Installer cài skill vào `~/.agents/skills/slr`, tạo profile mặc định và tự đăng ký connector. Nếu chạy tương tác và profile chưa có project token, installer hỏi token với phần nhập được ẩn; nhấn Enter để bỏ qua và cấu hình sau bằng `/slr config token <TOKEN>`. Token được kiểm tra với API để xác định đúng agent/project trước khi được lưu và bật connector review. Open-Science Credential `SLR_AGENT_TOKEN` chỉ là cơ chế lưu/cấp cùng token đó cho MCP, không phải token thứ hai. Nếu Open-Science daemon chưa chạy, installer sẽ thử khởi động daemon.
 
 Kết quả cài đặt khi chưa cấu hình project:
 
@@ -93,7 +93,7 @@ Sau khi cài đặt:
 
 ### Báo cáo không tương tác
 
-`--json` in báo cáo máy đọc được; lệnh cài đặt không yêu cầu token ở cả chế độ tương tác lẫn không tương tác:
+`--json` in báo cáo máy đọc được và không hỏi token; ở chế độ tương tác, installer hỏi token ẩn nếu profile chưa cấu hình:
 
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science --json
@@ -114,7 +114,7 @@ npx github:ResearchPulse/slr_skill_open_science workspace init --profile afl-rev
 npx github:ResearchPulse/slr_skill_open_science setup --profile afl-review
 ```
 
-Setup cần Open-Science CLI để tự đăng ký `slr-config`. Nếu đăng ký connector thất bại, installer dừng và báo lỗi; không có bước import connector thủ công. Credential và review connector sẽ được tạo tự động khi cấu hình token project bằng `/slr config token <TOKEN>`.
+Setup cần Open-Science CLI để tự đăng ký connector. Nếu nhập token lúc cài, installer xác thực token với API rồi tự đăng ký/bật review connector. Nếu bỏ qua, có thể cấu hình sau bằng `/slr config token <TOKEN>`. Không có bước import connector thủ công.
 
 ### Kiểm tra cài đặt
 
@@ -165,11 +165,11 @@ API base URL mặc định có dạng `https://<backend-host>/api`. Agent token 
 
 ## 🔐 Bảo mật và xác nhận
 
-- Token chỉ nằm trong Credential mã hóa `SLR_AGENT_TOKEN`; không đưa token vào chat, source code, profile metadata hoặc connector JSON.
+- Token thô chỉ được nhập qua prompt ẩn lúc cài hoặc lệnh rõ ràng `/slr config token`; sau đó Open-Science lưu/cấp token tương ứng cho từng profile bằng Credential mã hóa `SLR_AGENT_TOKEN`. Không ghi token vào source code, profile metadata hoặc connector JSON.
 - `/slr review` hiển thị decision, reasoning và data rồi hỏi `confirm` hoặc `cancel` một lần. Digest handshake được xử lý tự động sau xác nhận.
 - Nếu hủy, payload không khớp digest hoặc xác nhận không rõ ràng, MCP không gửi request ghi.
 - Kết quả chỉ hoàn tất **AI task**. Nó không tạo quyết định screening của reviewer, không đổi trạng thái paper và không tạo Human-vs-Human conflict.
-- Token bị rotate cần được cập nhật trong Credential/connector trước khi kết nối lại.
+- Mỗi project profile dùng project token tương ứng; khi token được cập nhật, installer cập nhật Credential của profile đó và connector review tương ứng.
 
 ## ⚙️ CLI và profile
 
@@ -183,13 +183,13 @@ npx github:ResearchPulse/slr_skill_open_science workspace init --profile <profil
 npx github:ResearchPulse/slr_skill_open_science setup --profile <profile-name>
 ```
 
-Setup quản lý runtime, skill, profile và connector cấu hình mà không cần project token. Sau đó dùng `/slr config token <TOKEN>` để gắn Credential cho project và bật connector review. `--json` dùng cho báo cáo không tương tác. Xem hướng dẫn đầy đủ trong [SLR MCP Open-Science setup](docs/SLR_MCP_OPEN_SCIENCE_SETUP.md).
+Setup quản lý runtime, skill, profile và connector. Khi chạy tương tác, có thể nhập project token ngay; hoặc dùng `/slr config token <TOKEN>` sau nếu đã bỏ qua. `--json` dùng cho báo cáo không tương tác và không hỏi token. Xem hướng dẫn đầy đủ trong [SLR MCP Open-Science setup](docs/SLR_MCP_OPEN_SCIENCE_SETUP.md).
 
 ## 🩺 Xử lý sự cố
 
 | Tình huống | Cách xử lý |
 | --- | --- |
-| `401` | Token thiếu, sai hoặc đã rotate. Cập nhật Credential hiện tại; không gửi token vào chat. |
+| `401` | Project token thiếu, sai hoặc đã rotate. Nhập lại token đúng cho project bằng `/slr config token <TOKEN>`. |
 | `404` | Task không còn trong phạm vi. Tải lại `/slr tasks` và chọn task đang được giao. |
 | `202` | Full-text extraction đang chạy. Chờ thời gian `Retry-After`; không poll liên tục. |
 | `409 FULLTEXT_STAGE_REQUIRED` | Không thử lại. Chỉ yêu cầu Markdown cho task `FULL_TEXT` có `markdownPath`. |

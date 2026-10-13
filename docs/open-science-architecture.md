@@ -23,7 +23,7 @@ The package intentionally has two MCP processes with separate responsibilities:
   -> slr_config_cancel
 ```
 
-The config process is local-only. It can be installed without a Credential so `/slr config token <TOKEN>` can establish the first project connection. It validates the token, stores it in the encrypted host Credential, and writes only local profile/connector state. The review process requires the bound token and the backend repository is not modified.
+The config process is local-only. Interactive install can optionally collect the project token, or `/slr config token <TOKEN>` can set it later. It validates the project token, stores that same value in the encrypted host Credential associated with the target profile, and writes only local profile/connector state. Each project profile has a separate Credential so configuring one project cannot replace another project's token. A Credential is Open-Science's storage/binding mechanism, not a second token. The review process receives the token bound to its profile and the backend repository is not modified.
 
 ## Approved decisions
 
@@ -36,12 +36,12 @@ The config process is local-only. It can be installed without a Credential so `/
 | Profiles | Multi-project profiles | A user can manage multiple SLR projects without mixing tokens |
 | Drafts | Local `paper-review/` workspace | Keeps draft/edit/submit workflow auditable and recoverable |
 | Submission safety | One user confirmation plus an internal digest-bound MCP handshake | The skill prepares the exact payload, asks once, then performs the matching confirmed call immediately before the backend write |
-| Credential priority | Optional during installation; mandatory host-managed `SLR_AGENT_TOKEN` for review | Lets users install once and configure a project-specific token later |
+| Project token | Optional hidden prompt during interactive installation; can be entered later with `/slr config token` | One project token identifies the agent/project and scopes task access; each profile stores/supplies its matching token through Open-Science Credential |
 
 ## Goals
 
 - Install or update the skill and connector with one `npx github:ResearchPulse/slr_skill_open_science` command.
-- Automatically register and enable `slr-config` during installation without asking for a project token.
+- Automatically register and enable the config connector during installation; prompt for the project token only in interactive setup and allow Enter to skip.
 - Register and enable both connectors after `/slr config token <TOKEN>` validates and binds the project token.
 - Fail closed when required connector registration or credential binding is unavailable; no manual connector-import path is supported.
 - Expose only `list_assigned_tasks`, `connection_test`, `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
@@ -91,10 +91,10 @@ The installer is intentionally small and cross-platform:
 2. Copy or update the `/slr` skill through the supported local skill/import path.
 3. Create or update secret-free API/profile metadata without requesting a token.
 4. Register and enable the local config connector.
-5. After the user supplies a project token through `/slr config token`, validate it, bind the encrypted `SLR_AGENT_TOKEN` Credential, and register/enable both connectors.
+5. If a project token is supplied during interactive installation or `/slr config token`, validate it, bind that same token as the encrypted `SLR_AGENT_TOKEN` Credential, and register/enable both connectors.
 6. Use the selected profile when starting the root MCP launcher.
 
-The installer must never put a raw token in command-line arguments, generated skill content, printed configuration, profile metadata, ordinary JSON files, drafts, audit records, or chat. The only token authority is the host-managed encrypted `SLR_AGENT_TOKEN` Credential injected into the connectors.
+The installer must never put a raw token in command-line arguments, generated skill content, printed configuration, profile metadata, ordinary JSON files, drafts, audit records, or ordinary chat. The token may be entered only through the hidden installer prompt or explicit `/slr config token` flow. The host-managed encrypted `SLR_AGENT_TOKEN` Credential is the storage/binding for that one project token, injected into the connectors.
 
 ### `cli/slr.js`
 
