@@ -29,3 +29,60 @@ export const submitReviewResultSchema = z.object({
 export type ListAssignedTasksInput = z.infer<typeof listAssignedTasksSchema>;
 export type TaskIdInput = z.infer<typeof taskIdSchema>;
 export type SubmitReviewResultInput = z.infer<typeof submitReviewResultSchema>;
+
+const extractionEvidenceSchema = z.object({
+  fieldId: z.string().trim().min(1),
+  sourceAssetId: z.string().trim().min(1),
+  sourceRevision: z.string().trim().min(1),
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  startOffset: z.number().int().min(0),
+  endOffset: z.number().int().min(1),
+  quote: z.string().trim().min(1).max(4000),
+  quoteHash: z.string().regex(/^[a-f0-9]{64}$/),
+  section: z.string().trim().max(500).optional(),
+  paragraph: z.number().int().min(0).optional(),
+  pdfPage: z.number().int().min(1).optional(),
+}).strict();
+
+export const saveExtractionDraftSchema = z.object({
+  taskId: z.string().trim().min(1).max(160),
+  templateVersion: z.number().int().min(1),
+  values: z.record(z.string(), z.unknown()),
+  evidence: z.array(extractionEvidenceSchema).max(500).default([]),
+  expectedVersion: z.number().int().min(0),
+}).strict();
+
+export const extractionTaskIdSchema = taskIdSchema;
+
+export const submitExtractionSchema = z.object({
+  taskId: z.string().trim().min(1).max(160),
+  confirmation: z.object({
+    confirm: z.boolean(),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+}).strict();
+
+export const consensusProposalSchema = z.object({
+  taskId: z.string().trim().min(1).max(160),
+  expectedVersion: z.number().int().min(0),
+  values: z.record(z.string(), z.unknown()),
+  findings: z.array(z.object({
+    findingId: z.string().trim().min(1),
+    fieldId: z.string().trim().min(1),
+    kind: z.enum(['VALUE_DISAGREEMENT', 'MISSING_REQUIRED', 'AI_SUGGESTION']),
+    status: z.enum(['PENDING', 'RESOLVED', 'DISMISSED']),
+    reviewer1Value: z.unknown().optional(),
+    reviewer2Value: z.unknown().optional(),
+    proposedValue: z.unknown().optional(),
+    resolution: z.unknown().optional(),
+    reason: z.string().optional(),
+  }).strict()).max(500),
+  confirmation: z.object({
+    confirm: z.boolean(),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+}).strict();
+
+export type SaveExtractionDraftInput = z.infer<typeof saveExtractionDraftSchema>;
+export type SubmitExtractionInput = z.infer<typeof submitExtractionSchema>;
+export type ConsensusProposalInput = z.infer<typeof consensusProposalSchema>;

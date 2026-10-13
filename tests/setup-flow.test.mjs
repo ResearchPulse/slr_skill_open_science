@@ -31,7 +31,7 @@ test('new non-interactive profiles use the production API default', async () => 
   const root = mkdtempSync(join(tmpdir(), 'slr-default-url-test-'));
   try {
     const setup = await prepareProfile({ name: 'default-url', interactive: false, environment: { SLR_CONFIG_DIR: root } });
-    assert.equal(setup.profile.apiBaseUrl, 'https://slr-api.hyperdatalab.org/api');
+    assert.equal(setup.profile.apiBaseUrl, 'https://slr-agent.hyperdatalab.org/api');
     assert.equal(setup.token, null);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -92,9 +92,10 @@ test('connector registration enables the connector after adding it', () => {
   ]);
   assert.match(calls[1].input, /"name":"slr-default"/);
   const connector = JSON.parse(calls[1].input);
-  assert.equal(connector.command, process.execPath);
-  assert.match(connector.args[0], /[\\/]bin[\\/]install\.js$/);
-  assert.deepEqual(connector.args.slice(1), ['--mcp', '--profile', 'default']);
+  assert.notEqual(connector.command, process.execPath);
+  assert.match(connector.command, /python/i);
+  assert.match(connector.args[0], /[\\/]scripts[\\/]slr_mcp\.py$/);
+  assert.deepEqual(connector.args.slice(1), ['--profile', 'default']);
 });
 
 test('Open-Science credential binding creates a stable SLR token credential', () => {
@@ -352,7 +353,7 @@ test('config connector requires the host credential binding', () => {
   assert.deepEqual(result, { registered: false, reason: 'credential-binding-missing' });
 });
 
-test('config connector uses the stable direct-node runtime', () => {
+test('config connector uses the stable direct-python runtime', () => {
   const calls = [];
   const report = { openScienceCli: { available: true, executable: 'open-science' } };
   const run = (executable, args, input) => {
@@ -370,9 +371,10 @@ test('config connector uses the stable direct-node runtime', () => {
     updated: false,
   });
   const connector = JSON.parse(calls.find(call => call.args[1] === 'add').input);
-  assert.equal(connector.command, process.execPath);
-  assert.match(connector.args[0], /[\\/]bin[\\/]install\.js$/);
-  assert.deepEqual(connector.args.slice(1), ['--config-mcp']);
+  assert.notEqual(connector.command, process.execPath);
+  assert.match(connector.command, /python/i);
+  assert.match(connector.args[0], /[\\/]scripts[\\/]slr_config_mcp\.py$/);
+  assert.deepEqual(connector.args.slice(1), []);
 });
 
 test('connector registration recognizes nested connector configuration output', () => {

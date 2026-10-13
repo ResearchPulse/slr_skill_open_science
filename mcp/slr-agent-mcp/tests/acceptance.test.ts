@@ -198,7 +198,7 @@ describe('SLR MCP acceptance harness', () => {
     api = undefined;
   });
 
-  it('runs the five-tool workflow through a real stdio process and fake API', async () => {
+  it('runs the screening workflow through a real stdio process and fake API', async () => {
     api = await startHarnessApi();
     const config = buildMcpConfig(api);
     const transport = new StdioClientTransport({
@@ -234,6 +234,12 @@ describe('SLR MCP acceptance harness', () => {
       'get_assigned_task',
       'get_task_fulltext',
       'submit_review_result',
+      'get_extraction_context',
+      'get_extraction_fulltext',
+      'save_extraction_draft',
+      'check_extraction_draft',
+      'submit_extraction_draft',
+      'finalize_extraction_consensus',
     ]);
 
     const listResult = await connectedClient.callTool({ name: 'list_assigned_tasks', arguments: { limit: 1 } });
@@ -244,11 +250,12 @@ describe('SLR MCP acceptance harness', () => {
     expect(detailResult.isError).not.toBe(true);
     expect(JSON.stringify(detailResult)).toContain(paper.title);
 
-    const pendingResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: { taskId } });
+    const fullTextArguments = { taskId, stage: 'FULL_TEXT' as const, markdownPath: '/papers/acceptance.md' };
+    const pendingResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: fullTextArguments });
     expect(pendingResult.isError).not.toBe(true);
     expect(JSON.stringify(pendingResult)).toContain('retryAfterSeconds');
 
-    const fullTextResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: { taskId } });
+    const fullTextResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: fullTextArguments });
     expect(fullTextResult.isError).not.toBe(true);
     expect(JSON.stringify(fullTextResult)).toContain('full text is ready');
 

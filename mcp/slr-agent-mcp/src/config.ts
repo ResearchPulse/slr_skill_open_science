@@ -11,7 +11,9 @@ export interface McpConfig {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_JSON_RESPONSE_BYTES = 1 * 1024 * 1024;
+// Extraction full-text responses are JSON envelopes containing bounded Markdown.
+// Keep the limit finite, but large enough for the backend's 20 MiB fetch bound.
+const DEFAULT_JSON_RESPONSE_BYTES = 24 * 1024 * 1024;
 const DEFAULT_MARKDOWN_RESPONSE_BYTES = 8 * 1024 * 1024;
 const APPROVED_API_HOSTS = ['slr-agent.hyperdatalab.org', 'slr-api.hyperdatalab.org', 'localhost', '127.0.0.1', '[::1]', '::1'];
 
@@ -84,7 +86,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): McpCon
     projectId: environment.SLR_PROJECT_ID?.trim() || 'unknown-project',
     projectName: environment.SLR_PROJECT_NAME?.trim() || 'SLR project',
     allowedHosts,
-    maxJsonResponseBytes: parseResponseLimit('SLR_MAX_JSON_RESPONSE_BYTES', environment.SLR_MAX_JSON_RESPONSE_BYTES, DEFAULT_JSON_RESPONSE_BYTES, 16 * 1024 * 1024),
+    maxJsonResponseBytes: parseResponseLimit('SLR_MAX_JSON_RESPONSE_BYTES', environment.SLR_MAX_JSON_RESPONSE_BYTES, DEFAULT_JSON_RESPONSE_BYTES, 32 * 1024 * 1024),
     maxMarkdownResponseBytes: parseResponseLimit('SLR_MAX_MARKDOWN_RESPONSE_BYTES', environment.SLR_MAX_MARKDOWN_RESPONSE_BYTES, DEFAULT_MARKDOWN_RESPONSE_BYTES, 32 * 1024 * 1024),
   };
 }

@@ -2,7 +2,7 @@
 
 This is a separate local MCP server for `/slr config`. It manages the local
 profile store and connector registration without adding configuration tools to
-the five-tool SLR review MCP.
+the SLR screening/extraction MCP.
 
 The installer can register this connector before a project token exists.
 `/slr config url <URL>` saves an approved API URL to the active profile without

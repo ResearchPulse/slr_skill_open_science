@@ -36,7 +36,7 @@ function reviewArguments(confirmation?: { confirm: boolean; digest: string }): R
 }
 
 describe('SLR MCP server', () => {
-  it('exposes the five Claude-compatible contract tools', async () => {
+  it('exposes the screening and extraction contract tools', async () => {
     const server = createServer(config);
     const client = new Client({ name: 'test-client', version: '1.0.0' });
     await connectPair(client, server);
@@ -48,6 +48,12 @@ describe('SLR MCP server', () => {
       'get_assigned_task',
       'get_task_fulltext',
       'submit_review_result',
+      'get_extraction_context',
+      'get_extraction_fulltext',
+      'save_extraction_draft',
+      'check_extraction_draft',
+      'submit_extraction_draft',
+      'finalize_extraction_consensus',
     ]);
 
     await client.close();
@@ -173,6 +179,36 @@ describe('SLR MCP server', () => {
 
     expect(submitCount).toBe(0);
     expect(JSON.stringify(result)).toContain('CONFIRMATION_MISMATCH');
+    await client.close();
+    await server.close();
+  });
+
+  it('keeps extraction confirmation to one user-facing prompt and submits the backend challenge once', async () => {
+    const digest = 'a'.repeat(64);
+    const paths: string[] = [];
+    const fetchFunction: typeof fetch = async (input, init) => {
+      const path = String(input);
+      paths.push(String(init?.method || 'GET') + ' ' + path);
+      if (path.endsWith('/context')) {
+        return new Response(JSON.stringify({ success: true, data: { task: { id: 'extract-1', taskKind: 'extraction' }, draft: { version: 1, values: { field: 'value' }, evidence: [] } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (path.endsWith('/submit-challenge')) {
+        return new Response(JSON.stringify({ success: true, data: { challengeId: 'challenge-1', payloadDigest: digest, expiresAt: new Date(Date.now() + 60_000).toISOString() } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ success: true, data: { status: 'SUBMITTED' } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const server = createServer(config, new AgentApiClient(config, fetchFunction));
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await connectPair(client, server);
+
+    const pending = await client.callTool({ name: 'submit_extraction_draft', arguments: { taskId: 'extract-1' } });
+    expect(JSON.stringify(pending)).toContain('CONFIRMATION_REQUIRED');
+    expect(paths.some(path => path.endsWith('/submit-challenge'))).toBe(true);
+    expect(paths.some(path => path.endsWith('/submit'))).toBe(false);
+
+    const submitted = await client.callTool({ name: 'submit_extraction_draft', arguments: { taskId: 'extract-1', confirmation: { confirm: true, digest } } });
+    expect(JSON.stringify(submitted)).toContain('SUBMITTED');
+    expect(paths.filter(path => path.endsWith('/submit')).length).toBe(1);
     await client.close();
     await server.close();
   });

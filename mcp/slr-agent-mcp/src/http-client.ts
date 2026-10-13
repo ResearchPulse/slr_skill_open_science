@@ -3,11 +3,18 @@ import type { McpConfig } from './config.js';
 import type {
   AgentApiEnvelope,
   AgentTask,
+  JsonObject,
+  ExtractionCheck,
+  ExtractionContext,
+  ExtractionFullText,
+  ExtractionDraft,
   FullTextResult,
+  PendingFullText,
   SubmitReviewInput,
   TaskDetail,
   TaskPage,
 } from './types.js';
+import type { ConsensusProposalInput, SaveExtractionDraftInput } from './schemas.js';
 
 type FetchFunction = typeof fetch;
 
@@ -122,6 +129,75 @@ export class AgentApiClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: serialized,
+    });
+  }
+
+  async getExtractionContext(taskId: string): Promise<ExtractionContext> {
+    return this.requestJson<ExtractionContext>(`/extraction/tasks/${encodeURIComponent(taskId)}/context`);
+  }
+
+  async getExtractionFullText(taskId: string): Promise<ExtractionFullText | PendingFullText> {
+    const response = await this.request(
+      `/extraction/tasks/${encodeURIComponent(taskId)}/fulltext`,
+      {},
+      [202],
+      'application/json',
+    );
+    const body = await this.readJson(response);
+    if (response.status === 202) {
+      const data = isRecord(body) && isRecord(body.data) ? body.data : {};
+      return {
+        kind: 'pending',
+        status: readString(data.status) || 'PROCESSING',
+        retryAfterSeconds: retryAfterSeconds(response.headers.get('retry-after')),
+      };
+    }
+    if (!isRecord(body) || body.success !== true || !isRecord(body.data)) {
+      throw new AgentApiError('Backend returned an invalid extraction full-text response', 502, 'INVALID_RESPONSE');
+    }
+    return body.data as unknown as ExtractionFullText;
+  }
+
+  async saveExtractionDraft(input: SaveExtractionDraftInput): Promise<{ draft: ExtractionDraft; canonicalRecordUntouched: boolean }> {
+    return this.requestJson<{ draft: ExtractionDraft; canonicalRecordUntouched: boolean }>(
+      `/extraction/tasks/${encodeURIComponent(input.taskId)}/draft`,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        templateVersion: input.templateVersion, values: input.values, evidence: input.evidence, expectedVersion: input.expectedVersion,
+      }) },
+    );
+  }
+
+  async checkExtractionDraft(taskId: string): Promise<ExtractionCheck> {
+    return this.requestJson<ExtractionCheck>(`/extraction/tasks/${encodeURIComponent(taskId)}/check`, { method: 'POST' });
+  }
+
+  async createExtractionSubmitChallenge(taskId: string): Promise<{ challengeId: string; payloadDigest: string; expiresAt: string; payload?: JsonObject }> {
+    return this.requestJson<{ challengeId: string; payloadDigest: string; expiresAt: string; payload?: JsonObject }>(
+      `/extraction/tasks/${encodeURIComponent(taskId)}/submit-challenge`, { method: 'POST' },
+    );
+  }
+
+  async submitExtraction(taskId: string, challengeId: string, payloadDigest: string): Promise<JsonObject> {
+    return this.requestJson<JsonObject>(`/extraction/tasks/${encodeURIComponent(taskId)}/submit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId, payloadDigest, idempotencyKey: `mcp-extraction-${taskId}-${payloadDigest}` }),
+    });
+  }
+
+  async createConsensusChallenge(input: ConsensusProposalInput): Promise<{ challengeId: string; payloadDigest: string; expiresAt: string; payload?: JsonObject }> {
+    return this.requestJson<{ challengeId: string; payloadDigest: string; expiresAt: string; payload?: JsonObject }>(
+      `/extraction/tasks/${encodeURIComponent(input.taskId)}/consensus-challenge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          expectedVersion: input.expectedVersion, values: input.values, findings: input.findings,
+        }),
+      },
+    );
+  }
+
+  async submitConsensusProposal(taskId: string, challengeId: string, payloadDigest: string): Promise<JsonObject> {
+    return this.requestJson<JsonObject>(`/extraction/tasks/${encodeURIComponent(taskId)}/consensus-proposal`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId, payloadDigest, idempotencyKey: `mcp-consensus-${taskId}-${payloadDigest}` }),
     });
   }
 

@@ -4,7 +4,7 @@
 
 This document defines the approved architecture for distributing the SLR `/slr` skill and its local MCP connector to AIPOCH Open-Science.
 
-The packaging experience follows the useful parts of `ResearchPulse/slr_skill_claude_science`: one `npx github:ResearchPulse/slr_skill_open_science` entrypoint, an installer, project profiles, local review drafts, and an audit trail. The runtime remains Node.js/TypeScript because the backend and current MCP implementation already use that stack.
+The packaging experience follows the useful parts of `ResearchPulse/slr_skill_claude_science`: one `npx github:ResearchPulse/slr_skill_open_science` entrypoint, an installer, project profiles, local review drafts, and an audit trail. Node remains the npx installer/compatibility launcher; the long-lived API client and both MCP stdio servers run from Python stdlib scripts like the Claude package.
 
 ## Connector split
 
@@ -13,7 +13,7 @@ The package intentionally has two MCP processes with separate responsibilities:
 ```text
 /slr review, /slr status, /slr tasks
   -> slr-agent-mcp
-  -> five Claude-compatible SLR task tools
+  -> Claude-compatible SLR screening and extraction task tools
 
 /slr config
   -> slr-config-mcp
@@ -30,8 +30,8 @@ The config process is local-only. Interactive install can optionally collect the
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Distribution | GitHub-installable npm package with an `npx` installer | Reproduces the simple Claude-style onboarding flow |
-| MCP runtime | Node.js + TypeScript | Matches the backend, Windows environment, and validated MCP SDK implementation |
-| MCP surface | Five bounded review tools | Matches the Claude connector while keeping config tools separate |
+| MCP runtime | Python 3.8+ stdlib | Matches the Claude package and avoids a long-lived Node/npm process and Windows `_npx` locks |
+| MCP surface | Five bounded screening tools plus isolated extraction tools | Matches the Claude connector while keeping config tools separate |
 | Host | Open-Science local connector | Open-Science manages local connectors, skills, permissions, and credentials |
 | Profiles | Multi-project profiles | A user can manage multiple SLR projects without mixing tokens |
 | Drafts | Local `paper-review/` workspace | Keeps draft/edit/submit workflow auditable and recoverable |
@@ -41,10 +41,9 @@ The config process is local-only. Interactive install can optionally collect the
 ## Goals
 
 - Install or update the skill and connector with one `npx github:ResearchPulse/slr_skill_open_science` command.
-- Automatically register and enable the config connector during installation; prompt for the project token only in interactive setup and allow Enter to skip.
-- Register and enable both connectors after `/slr config token <TOKEN>` validates and binds the project token.
+- Automatically register and enable both Open-Science local connectors when the Open-Science CLI is available. Interactive setup prompts for the project token and allows Enter to skip; `/slr config token <TOKEN>` validates and binds it later.
 - Fail closed when required connector registration or credential binding is unavailable; no manual connector-import path is supported.
-- Expose only `list_assigned_tasks`, `connection_test`, `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
+- Expose the five bounded screening tools plus the isolated Phase-2 extraction tools; keep configuration tools in `slr-config`.
 - Support the Claude-compatible `/slr` command surface: setup, status, list/tasks, task, fulltext, review, drafts, edit, submit, auto, mcp, diag, config subcommands, and help; `doctor` remains a root CLI command.
 - Preserve the project-scoped bearer-token API contract without changing backend routes.
 - Keep the project token out of prompts, skill text, drafts, audit records, and normal tool results.
@@ -54,7 +53,7 @@ The config process is local-only. Interactive install can optionally collect the
 - Adding direct-API or arbitrary-shell fallback paths.
 - Replacing the existing SLR agent API or duplicating backend business logic.
 - Supporting batch submission without an explicit user command and per-result safety checks.
-- Requiring Python for installation or runtime.
+- Requiring Python for the Node-only installer path.
 - Automatically searching literature or downloading arbitrary URLs.
 
 ## Target package layout
@@ -67,11 +66,12 @@ slr_skill_open_science/
 │   └── install.js               # cross-platform installer and upgrade command
 ├── cli/
 │   └── slr.js                   # config/profile/doctor/draft utilities
-├── mcp/
-│   └── slr-agent-mcp/
-│       ├── src/                  # TypeScript MCP implementation
-│       ├── tests/
-│       └── out/                  # release artifact produced before packing
+├── scripts/
+│   ├── slr.py                    # shared Python stdlib API/profile runtime
+│   ├── slr_mcp.py                # released screening/extraction MCP server
+│   └── slr_config_mcp.py         # released configuration MCP server
+├── mcp/                          # TypeScript transition/parity implementation
+│   └── ...
 ├── skill/
 │   └── slr/
 │       ├── SKILL.md
@@ -79,7 +79,7 @@ slr_skill_open_science/
 └── docs/
 ```
 
-`paper-review/` is a runtime workspace, not a package source directory. It contains `fulltext/`, `drafts/`, `submitted/`, and `audit.jsonl` and can be placed in the current Open-Science project workspace.
+The package includes the three Python stdlib runtime scripts above. The TypeScript `mcp/` trees remain in the repository for transition and parity tests but are not required in the packed npx artifact. `paper-review/` is a runtime workspace, not a package source directory. It contains `fulltext/`, `drafts/`, `submitted/`, and `audit.jsonl` and can be placed in the current Open-Science project workspace.
 
 ## Component responsibilities
 
@@ -117,11 +117,11 @@ The MCP server remains a thin adapter over `/api/agent/v1`:
 Open-Science
   ├── /slr skill
   └── local MCP connector
-       └── TypeScript MCP server
+       └── Python stdlib MCP server
             └── SLR /api/agent/v1
 ```
 
-It does not own project selection UI, task business rules, or review criteria. The root launcher resolves secret-free profile metadata and requires `SLR_AGENT_TOKEN` from the host credential binding. The MCP process sends the token only as an Authorization bearer header.
+It does not own project selection UI, task business rules, or review criteria. The released connector process is the Python stdlib server in `scripts/`; the TypeScript tree is retained only for transition/parity tests. The root launcher resolves secret-free profile metadata and requires `SLR_AGENT_TOKEN` from the host credential binding. The MCP process sends the token only as an Authorization bearer header.
 
 ## Profile and credential model
 
@@ -163,23 +163,29 @@ The raw project token is never stored in Git, the skill, review drafts, `audit.j
 
 ## Tool contract
 
-The public MCP tool names remain:
+The public MCP tool names are:
 
 1. `list_assigned_tasks`
 2. `connection_test`
 3. `get_assigned_task`
 4. `get_task_fulltext`
 5. `submit_review_result`
+6. `get_extraction_context`
+7. `get_extraction_fulltext`
+8. `save_extraction_draft`
+9. `check_extraction_draft`
+10. `submit_extraction_draft`
+11. `finalize_extraction_consensus`
 
-`/slr status`, `doctor`, profile management, and audit inspection are CLI/skill behavior, not additional MCP tools. This keeps the connector compatible with the existing API contract and prevents tool sprawl.
+`submit_extraction_draft` writes only an isolated pending proposal after one user confirmation and a backend challenge/idempotency check. `finalize_extraction_consensus` is named for compatibility but creates or updates a leader-scoped consensus proposal; human promotion/finalization remains separate. Extraction tasks require explicit `taskKind: "extraction"`; task-kind migration is an explicit backend operation, not an implicit read fallback. Both reviewer and leader proposals are checked against template/source/version bindings before acceptance. `/slr status`, `doctor`, profile management, and audit inspection are CLI/skill behavior, not additional MCP tools.
 
 ## Alternatives considered
 
 ### Exact Claude implementation
 
-Python stdlib CLI/MCP, its own profile/token store, and five MCP tools.
+Python stdlib CLI/MCP, its own profile/token store, and the legacy MCP tool set.
 
-Rejected because it introduces Python as a required runtime and duplicates Open-Science credential management; the bounded `connection_test` capability is ported separately in the canonical Node/TypeScript server.
+Rejected as the primary runtime because it would diverge from the Claude package and keep npm/Node in every long-lived connector process. The TypeScript implementation remains only for transition and parity tests.
 
 ### Minimal current implementation
 
@@ -189,14 +195,14 @@ Rejected because it lacks the one-command installer, profiles, local drafts, aud
 
 ### Approved hybrid
 
-Claude-style installer/CLI/profile/draft experience, Node/TypeScript runtime, five MCP tools, and Open-Science-native connector/credential integration when available.
+Claude-style installer/CLI/profile/draft experience, Node-only npx installation, Python stdlib screening/extraction/config MCP tools, and Open-Science-native connector/credential integration when available.
 
 Chosen because it preserves the desired user experience while matching the target host and existing codebase.
 
 ## Acceptance criteria
 
 - `npx github:ResearchPulse/slr_skill_open_science` installs or updates the skill and produces a usable connector configuration.
-- A registered connector starts without Python and discovers five bounded tools.
+- A registered connector starts the bundled Python runtime and discovers bounded screening and extraction tools.
 - `/slr status` works through `list_assigned_tasks`.
 - Profile switching never mixes project tokens and visibly identifies the active project.
 - Drafts can be reviewed/edited locally and audit records contain no raw token.

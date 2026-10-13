@@ -20,6 +20,7 @@ npx github:ResearchPulse/slr_skill_open_science
 </div>
 
 ---
+Current connector model: setup prepares two local MCP connectors. The review connector exposes the five Claude-compatible screening tools plus the Phase-2 extraction tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. When the Open-Science CLI is available, setup creates or updates the `SLR_AGENT_TOKEN` Credential and binds it to both connectors automatically. Node is used for the one-time `npx` installer; both long-lived MCP processes run the bundled Python stdlib scripts directly. Setup stages a stable runtime under `~/.slr/runtimes/<fingerprint>`, so a connector never re-runs `npx` against a locked `_npx` cache on Windows.
 
 ## 📑 Mục lục
 
@@ -141,6 +142,28 @@ npx github:ResearchPulse/slr_skill_open_science doctor
 | `/slr help` | Hiện danh sách lệnh |
 
 ### Quy tắc đọc bài
+- `mcp/` — retained TypeScript MCP implementations used for transition/parity tests; released connectors use `scripts/`.
+- `scripts/slr.py` — stdlib API client, profile metadata, credential binding, and connector helpers.
+- `scripts/slr_mcp.py` — local Python MCP server for screening and Phase-2 extraction.
+- `scripts/slr_config_mcp.py` — separate Python configuration MCP server with five `slr_config_*` tools.
+- `mcp/` — retained TypeScript implementation used for transition/parity tests; released connectors use the Python scripts.
+  - `list_assigned_tasks`
+  - `connection_test`
+  - `get_assigned_task`
+  - `get_task_fulltext`
+  - `submit_review_result`
+  - `get_extraction_context`
+  - `get_extraction_fulltext`
+  - `save_extraction_draft`
+  - `check_extraction_draft`
+  - `submit_extraction_draft`
+  - `finalize_extraction_consensus`
+- `skill/slr/` — `/slr` skill instructions for Open-Science task discovery, review drafting, and confirmation-gated submission.
+- `docs/SLR_MCP_OPEN_SCIENCE_SETUP.md` — setup and troubleshooting guide.
+
+Phase-2 extraction is selected by an explicit `taskKind: "extraction"`; missing or ambiguous legacy task kinds are not defaulted during reads and require the backend migration endpoint. Reviewer extraction uses an isolated task/agent/reviewer draft and the deterministic `check_extraction_draft` gate. `submit_extraction_draft` records only a `PENDING_HUMAN_PROMOTION` proposal, so the assigned reviewer must promote it in the web app. `finalize_extraction_consensus` is the leader-capability tool for a consensus proposal; it does not finalize canonical consensus. Drafts and evidence remain bound to the immutable template snapshot, template version, source asset/revision/hash, normalized offsets, and canonical base version.
+
+Submission has one user-facing confirmation. `/slr review` shows the exact draft and asks for `confirm` or `cancel` once. On `confirm`, it calls `submit_review_result`; if that safe first call returns a matching payload digest, the skill automatically calls the same tool with `confirmation: { confirm: true, digest }` immediately before the single backend POST. If the user cancels, the host lacks the confirmation path, or the digest mismatches, no write is sent.
 
 - `TITLE_ABSTRACT`: đánh giá title và abstract, không gọi API Markdown.
 - `FULL_TEXT`: chỉ gọi `get_task_fulltext` khi task có `stage: "FULL_TEXT"` và `markdownPath`. Nếu API trả `202`, chờ ít nhất thời gian trong `Retry-After` trước khi thử lại.
@@ -150,6 +173,12 @@ npx github:ResearchPulse/slr_skill_open_science doctor
 ## 🔌 MCP tools
 
 Connector review cung cấp:
+Setup registers the released package as a direct Python connector. The generated configuration is equivalent to:
+
+```text
+Command: <Python 3.8+ executable>
+Arguments: <managed runtime>/scripts/slr_mcp.py --profile afl-review
+```
 
 | Tool | Chức năng |
 | --- | --- |
@@ -184,6 +213,7 @@ npx github:ResearchPulse/slr_skill_open_science setup --profile <profile-name>
 ```
 
 Setup quản lý runtime, skill, profile và connector. Khi chạy tương tác, có thể nhập project token ngay; hoặc dùng `/slr config token <TOKEN>` sau nếu đã bỏ qua. `--json` dùng cho báo cáo không tương tác và không hỏi token. Xem hướng dẫn đầy đủ trong [SLR MCP Open-Science setup](docs/SLR_MCP_OPEN_SCIENCE_SETUP.md).
+The installer detects Python and writes the stable script path into the connector definition. The script resolves the selected secret-free profile and requires the host credential binding `SLR_AGENT_TOKEN` in its environment. The profile API URL is authoritative; stdout is reserved for MCP JSON-RPC and diagnostics use stderr. The Node `bin/install.js --mcp` path remains only as a compatibility launcher for older connector entries.
 
 ## 🩺 Xử lý sự cố
 
@@ -198,6 +228,29 @@ Setup quản lý runtime, skill, profile và connector. Khi chạy tương tác,
 | `doctor` báo thiếu asset | Cài lại package từ GitHub và chạy `doctor` lần nữa. |
 
 ## 🧑‍💻 Phát triển
+```text
+Command: <Python 3.8+ executable>
+Arguments: <managed runtime>/scripts/slr_config_mcp.py
+Credential binding: SLR_AGENT_TOKEN
+```
+
+It exposes `slr_config_profiles`, `slr_config_validate`, `slr_config_token`, `slr_config_commit`, and `slr_config_cancel`. Only `slr_config_token` accepts a raw token, and only for the explicit `/slr config token <TOKEN>` flow; it validates and binds the token immediately and never returns it. Setup must register and enable the connector automatically; if it is unavailable, the command stops with `CONFIG_CONNECTOR_UNAVAILABLE` and does not claim a configuration change.
+
+## Local development run
+
+From the package root:
+
+```powershell
+$env:SLR_API_BASE_URL = "https://slr-api.hyperdatalab.org/api"
+$env:SLR_AGENT_TOKEN = "<project-token>"
+python scripts/slr_mcp.py
+```
+
+The Python scripts communicate over stdio and receive both values through the runtime environment. The production connector receives the token from the host credential binding and profile metadata supplies the API URL. In both flows, the token is sent to the backend only as an `Authorization: Bearer` header. Never place the project token in chat, prompts, the skill, source code, source control, issues, screenshots, or logs. If it is exposed, rotate it in SLR and update the connector credential.
+
+## Acceptance harness
+
+The repository includes a deterministic harness that starts the compiled MCP over stdio and uses a local fake SLR API. It validates the real protocol boundary without touching the backend or requiring a project token:
 
 ```powershell
 npm install
@@ -209,6 +262,9 @@ npm test
 ```
 
 Các workspace MCP nằm trong `mcp/slr-agent-mcp` và `mcp/slr-config-mcp`. Gói root cũng có lệnh `npm run pack:check` để kiểm tra nội dung package đóng gói.
+The harness checks screening and extraction tool discovery including the bounded `connection_test`, bearer propagation, paginated task lookup, `202` full-text processing, isolated extraction confirmation, declined submission with zero canonical writes, digest-bound confirmation, one successful POST, and terminal `409` behavior without retry. `npm test` includes the harness through the MCP workspace test suite. `npm run pack:check` additionally validates a clean packed install; it requires npm registry/cache access for dependency installation.
+
+The Python runtime checks are included in `npm run test:cli`; they validate Python syntax/imports and both MCP `initialize`/`tools/list` handshakes when Python 3.8+ is available.
 
 ## 📁 Cấu trúc dự án
 
