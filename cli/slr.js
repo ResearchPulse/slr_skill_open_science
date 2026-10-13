@@ -236,7 +236,14 @@ export function ensureOpenScienceDaemon(
 
 function connectorIdFromAddOutput(stdout) {
   const value = parseJsonOutput(stdout);
-  return value?.id || value?.connectorId || value?.connector?.id || value?.data?.id || null;
+  return value?.id
+    || value?.connectorId
+    || value?.connector?.id
+    || value?.createdConnector?.id
+    || value?.data?.id
+    || value?.data?.connectorId
+    || value?.data?.connector?.id
+    || null;
 }
 
 function credentialRecords(stdout) {
@@ -356,7 +363,16 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
   }
   connectorId ||= connectorIdFromAddOutput(result.stdout);
   if (!connectorId) {
-    return { registered: false, reason: 'open-science-connector-id-missing' };
+    // Some Open-Science CLI versions acknowledge a successful add without
+    // returning the created ID. Read the saved connector back and resolve it
+    // by the same name/runtime signature used for idempotent updates.
+    const refreshed = run(executable, ['connector', 'list', '--json']);
+    if (!refreshed.error && refreshed.status === 0) {
+      connectorId = existingConnectorId(refreshed.stdout, connector);
+    }
+    if (!connectorId) {
+      return { registered: false, reason: 'open-science-connector-id-missing' };
+    }
   }
   const enabled = run(executable, ['connector', 'enable', connectorId]);
   if (enabled.error || enabled.status !== 0) {
