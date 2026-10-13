@@ -55,7 +55,7 @@ Use `--json` for a non-interactive report. If automatic config-connector registr
 npx github:ResearchPulse/slr_skill_open_science --json
 ```
 
-`setup` đồng thời copy thư mục skill được quản lý vào `~/.agents/skills/slr`. Trong Open-Science, vào **Settings → Skills → Import installed skills**, import thư mục đã cài đặt này rồi bật skill `/slr`. Có thể dùng `--skill-dir PATH` nếu muốn đặt skill ở thư mục local khác. Nếu thư mục đích đã có skill không do package quản lý, lệnh sẽ dừng để tránh ghi đè.
+`setup` đồng thời copy thư mục skill được quản lý vào `~/.agents/skills/slr`. Đây mới là bản local để Open-Science import. Trong ứng dụng, vào **Settings → Skills → Add skill → Import installed skills**, chọn `slr`, bấm **Import selected**, sau đó tìm skill đã import và bật nếu đang tắt. Open-Science dùng bản import; chỉ chép file vào `~/.agents/skills/slr` chưa làm skill khả dụng trong chat. Có thể dùng `--skill-dir PATH` nếu muốn đặt skill ở thư mục local khác. Nếu thư mục đích đã có skill không do package quản lý, lệnh sẽ dừng để tránh ghi đè.
 
 Sau khi bật skill, mở conversation mới và cấu hình project bằng `/slr config token <TOKEN>`. Lệnh này dùng connector `slr-config` đã được cài tự động; không cần cấu hình token ở bước cài package. Sau khi connector báo cần kết nối lại, mở conversation mới rồi chạy `/slr setup` để kiểm tra read-only. Skill không tự thay đổi Settings của Open-Science.
 

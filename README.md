@@ -80,16 +80,16 @@ Kết quả cài đặt khi chưa cấu hình project:
 ```text
 SLR skill installed · profile default
 Config connector: enabled (slr-config)
-Skill: installed
-Next: Open-Science → New conversation → /slr config token <TOKEN>
+Skill files: installed
+Next: Settings → Skills → Add skill → Import installed skills → select slr → Import selected
 ```
 
 Sau khi cài đặt:
 
-1. Mở cuộc hội thoại Open-Science mới.
-2. Bật skill `/slr` trong Settings → Skills nếu chưa được bật tự động.
-3. Chạy `/slr config token <TOKEN>` để cấu hình token cho project cần review.
-4. Mở conversation mới rồi chạy `/slr setup` để kiểm tra kết nối chỉ đọc.
+1. Trong Open-Science, vào **Settings → Skills → Add skill → Import installed skills**.
+2. Chọn `slr`, bấm **Import selected**, rồi tìm `slr` trong danh sách Skills và bật nếu đang tắt. Open-Science dùng bản import; chép file vào `~/.agents/skills/slr` chưa làm skill khả dụng trong chat.
+3. Mở conversation mới. Nếu chưa cấu hình project token, chạy `/slr config token <TOKEN>`.
+4. Chạy `/slr setup` để kiểm tra kết nối chỉ đọc, rồi `/slr tasks` để xem bài được giao.
 
 ### Báo cáo không tương tác
 

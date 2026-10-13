@@ -607,7 +607,8 @@ function printSetup(report, asJson, setup = {}) {
       registration: setup.registration || null,
       configRegistration: setup.configRegistration || null,
       nextSteps: [
-        'Open a new Open-Science conversation so the updated /slr skill is loaded.',
+        'In Open-Science, import the local skill: Settings > Skills > Add skill > Import installed skills; select slr and import it.',
+        'Open a new conversation after importing the skill.',
         ...(setup.tokenConfigured
           ? ['Run /slr setup to verify the read-only MCP connection.', 'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.']
           : ['Run /slr config token <TOKEN> to bind the project credential and enable the review connector.']),
@@ -619,8 +620,9 @@ function printSetup(report, asJson, setup = {}) {
   if (!setup.tokenConfigured && setup.configRegistration?.registered && setup.configRegistration?.enabled) {
     console.log(`SLR skill installed${setup.profile?.name ? ` · profile ${setup.profile.name}` : ''}`);
     console.log('Config connector: enabled (slr-config)');
-    if (setup.skill?.status) console.log('Skill: ' + setup.skill.status);
-    console.log('Next: Open-Science → New conversation → /slr config token <TOKEN>');
+    if (setup.skill?.status) console.log('Skill files: ' + setup.skill.status);
+    console.log('Next: Open-Science → Settings → Skills → Add skill → Import installed skills → select slr → Import selected');
+    console.log('Then open a new conversation and run /slr config token <TOKEN> if the project token is not configured.');
     return;
   } else if (setup.connection?.connected) {
     console.log(`SLR ready${setup.connection.projectName ? ` · ${setup.connection.projectName}` : ''} · ${setup.connection.assignedTasks ?? 0} assigned tasks`);
@@ -639,8 +641,9 @@ function printSetup(report, asJson, setup = {}) {
   const configReady = setup.configRegistration?.registered === true && setup.configRegistration?.enabled === true;
   if (setup.tokenConfigured && reviewReady && configReady) console.log('Connectors: enabled (slr-default, slr-config)');
   else console.log(`Connector setup failed (${setup.registration?.reason || setup.configRegistration?.reason || 'unknown'})`);
-  if (setup.skill?.status) console.log('Skill: ' + setup.skill.status);
-  if (setup.tokenConfigured) console.log('Next: Open-Science → New conversation → /slr setup');
+  if (setup.skill?.status) console.log('Skill files: ' + setup.skill.status);
+  console.log('Next: Import slr from Open-Science → Settings → Skills → Add skill → Import installed skills, then open a new conversation.');
+  if (setup.tokenConfigured) console.log('Run /slr setup to verify the connection.');
 }
 
 function runProfileCommand(args, asJson) {
@@ -800,7 +803,8 @@ export async function main(args = process.argv.slice(2), options = {}) {
       configRegistration,
       skill,
       nextSteps: [
-        'Open a new Open-Science conversation so the updated /slr skill is loaded.',
+        'Import slr in Open-Science: Settings > Skills > Add skill > Import installed skills; select slr and import it.',
+        'Open a new conversation after importing the skill.',
         ...(hasCredential
           ? ['Run /slr setup before reviewing a paper.', 'Assign a paper in the SLR web application, then run /slr tasks or /slr review next.']
           : ['Run /slr config token <TOKEN> to bind the project credential and enable the review connector.']),
