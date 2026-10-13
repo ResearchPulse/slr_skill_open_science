@@ -45,7 +45,7 @@ Arguments: <managed runtime>/bin/install.js --config-mcp
 Initial install without a token: config connector only. Supplying the project token or running `/slr config token` binds that same token and enables the review connector.
 ```
 
-The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-api.hyperdatalab.org/api` by default, creates local profile metadata and registers the config connector. In an interactive terminal it asks for the project token if one is not already bound; Enter skips this so the token can be configured later. A supplied token is validated before it is stored by Open-Science and used to enable the review connector. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
+The no-argument command is the fast path. It detects Node, installs the `/slr` skill, uses `https://slr-agent.hyperdatalab.org/api` by default, creates local profile metadata and registers the config connector. Configure the URL or project token later in chat with `/slr config url <URL>` and `/slr config token <TOKEN>`. A supplied token is validated before it is stored by Open-Science and used to enable the review connector. If the CLI is installed but the daemon is stopped, setup starts it with `open-science start --no-open` and waits briefly for readiness; the desktop window does not need to be opened manually. On Windows, setup also checks common per-user install locations and `OPEN_SCIENCE_CLI` when the command is not on `PATH`. Human output is intentionally concise; use `--json` for the full report. Use `--api-base-url` only when targeting another server.
 
 Use `--json` for a non-interactive report. If automatic config-connector registration is unavailable, setup reports the failure and exits non-zero. After the skill and config connector are available, open a new Open-Science conversation and run `/slr config token <TOKEN>` for the project you want to use. When it succeeds, open a new conversation and run `/slr setup` to perform the read-only connection check.
 
@@ -74,7 +74,7 @@ Tạo profile metadata (không cần dán token vào terminal):
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science profile create `
   --name afl-review `
-  --api-base-url https://slr-api.hyperdatalab.org/api `
+  --api-base-url https://slr-agent.hyperdatalab.org/api `
   --project-id <project-id> `
   --project-name "AFL review"
 ```
@@ -122,7 +122,7 @@ MCP package nằm ở `mcp/slr-agent-mcp`; có thể chạy trực tiếp bằng
 Environment cần có:
 
 ```text
-SLR_API_BASE_URL=https://slr-api.hyperdatalab.org/api
+SLR_API_BASE_URL=https://slr-agent.hyperdatalab.org/api
 SLR_AGENT_TOKEN=<project-scoped-token>
 ```
 
@@ -187,7 +187,9 @@ Skill bắt buộc hiển thị block `Suggested next actions` sau mọi lệnh 
 
 ## 6. Xử lý lỗi
 
-- `401`: API từ chối project token. Production dùng `https://slr-api.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại từ đúng reviewer/project workspace. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực. Nếu đúng endpoint và token hiện tại vẫn lỗi, nhờ SLR admin kiểm tra agent connection.
+Deployment check (2026-10-13): `slr-agent.hyperdatalab.org` health check trả `200`; agent task route trả `401` khi không có Authorization token, như kỳ vọng. Token đã gửi trong lần chẩn đoán bị backend này từ chối là invalid/inactive. URL có thể lưu trực tiếp bằng `/slr config url https://slr-agent.hyperdatalab.org/api`; cần token hiện hành do cùng deployment cấp để hoàn tất kết nối.
+
+- `401`: API từ chối project token. Production dùng `https://slr-agent.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại từ đúng reviewer/project workspace rồi nhập bằng `/slr config token <TOKEN>`. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực.
 - `404`: task/paper không còn trong scope; tải lại danh sách.
 - `202`: full text đang xử lý; chờ `retryAfterSeconds`, không poll liên tục.
 - `409`: full text không khả dụng hoặc task đã hoàn tất. Không retry submit.
@@ -216,7 +218,7 @@ Package hiện expose năm tool review tương thích Claude, trong đó `connec
 
 ## In-chat profile configuration
 
-The in-chat flow uses the separate `slr-config` connector. Plain `/slr config` calls `slr_config_profiles`, asks the user to choose/create a profile, then uses the credential-bound `slr_config_validate` and `slr_config_commit` flow. The quick path `/slr config token <TOKEN>` accepts the token in chat, calls `slr_config_token`, validates before mutation, binds the Open-Science `SLR_AGENT_TOKEN` credential, and updates/enables both connectors automatically. The token is not unnecessarily repeated in the response. When validation returns `ok: false`, show the safe HTTP status, error code, and API message from its `connection` object. When connector registration fails, show its registration code and reason. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
+The in-chat flow uses the separate `slr-config` connector. `/slr config url <URL>` calls `slr_config_url` and saves the URL to the active profile without a token or connector credential. `/slr config token <TOKEN>` accepts the token in chat, calls `slr_config_token`, validates it, automatically binds the Open-Science `SLR_AGENT_TOKEN` credential, and updates/enables both connectors. The token is not unnecessarily repeated in the response. When validation returns `ok: false`, show the safe HTTP status, error code, and API message from its `connection` object. When connector registration fails, show its registration code and reason. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
 
 Use `/slr config` when the local project profile needs to change, or paste the token with `/slr config token <TOKEN>` for the quick path. An exact token match switches, a matching project ID updates, and otherwise the token is saved to the selected profile. The token is passed to the config tool for validation and is not written to profile metadata or connector JSON.
 

@@ -2,6 +2,11 @@ import * as z from 'zod/v4';
 
 export const noArgumentsSchema = z.object({}).strict();
 
+export const urlConfigSchema = z.object({
+  profileName: z.string().trim().min(1).max(64).optional().describe('Optional local profile to update; defaults to the active profile or default.'),
+  apiBaseUrl: z.string().trim().url().max(500).describe('SLR API base URL to save to the selected local profile.'),
+}).strict();
+
 export const validateSchema = z.object({
   profileName: z.string().trim().min(1).max(64).optional().describe('Local profile to create or validate.'),
   apiBaseUrl: z.string().trim().url().max(500).optional().describe('Optional SLR API base URL; use the configured production URL when omitted.'),

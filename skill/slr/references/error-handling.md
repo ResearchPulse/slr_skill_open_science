@@ -2,7 +2,7 @@
 
 | Status/code | Action |
 |---|---|
-| `401` | Stop. Confirm the API base URL is `https://slr-api.hyperdatalab.org/api`, then ask the user to provide the current `slrp_...` token from the same reviewer's project workspace with `/slr config token <TOKEN>`. Rotating the token, disabling access, or switching agents invalidates the previous token. If the current token still fails, ask the SLR administrator to verify the agent connection is active. |
+| `401` | Stop. Confirm the API base URL is `https://slr-agent.hyperdatalab.org/api`, then ask the user to provide the current `slrp_...` token from the same reviewer's project workspace with `/slr config token <TOKEN>`. Rotating the token, disabling access, or switching agents invalidates the previous token. If the current token still fails, report the API rejection for that endpoint. |
 | `404` | Stop the current task. Refresh the task list; do not guess an ID. |
 | `409 FULLTEXT_STAGE_REQUIRED` | Stop without retrying. Markdown was requested outside the `FULL_TEXT` stage or without the task's `markdownPath`; use task details to determine the allowed action. |
 | Other `409` on full text | Explain that Markdown is unavailable; suggest uploading the PDF in the SLR web app and retrying the task; do not submit based on invented content. |

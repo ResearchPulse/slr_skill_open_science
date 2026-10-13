@@ -28,6 +28,8 @@ export interface PublicProfile {
 type ProfileStoreApi = {
   listProfiles(environment: ConfigEnvironment): PublicProfile[];
   getActiveProfile(environment: ConfigEnvironment): PublicProfile | null;
+  createProfile(input: { name: string; apiBaseUrl: string }, environment: ConfigEnvironment): PublicProfile;
+  updateProfile(name: string, changes: { apiBaseUrl: string }, environment: ConfigEnvironment): PublicProfile;
   captureProfileStore(environment: ConfigEnvironment): Record<string, unknown>;
   restoreProfileStore(snapshot: Record<string, unknown>, environment: ConfigEnvironment): PublicProfile | null;
   useProfile(name: string, environment: ConfigEnvironment): PublicProfile;
@@ -76,6 +78,16 @@ export function listProfiles(environment: ConfigEnvironment): PublicProfile[] {
 
 export function activeProfile(environment: ConfigEnvironment): PublicProfile | null {
   return profileStore.getActiveProfile(environment);
+}
+
+export function configureProfileUrl(name: string | undefined, apiBaseUrl: string, environment: ConfigEnvironment): PublicProfile {
+  const profileName = name || profileStore.getActiveProfile(environment)?.name || 'default';
+  try {
+    return profileStore.updateProfile(profileName, { apiBaseUrl }, environment);
+  } catch (error) {
+    if (name || !/profile not found/i.test(error instanceof Error ? error.message : '')) throw error;
+    return profileStore.createProfile({ name: profileName, apiBaseUrl }, environment);
+  }
 }
 
 export function captureProfileStore(environment: ConfigEnvironment): Record<string, unknown> {

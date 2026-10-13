@@ -106,18 +106,18 @@ Reconnect the SLR review connector, then run /slr setup again.
 
 The user may provide the project token directly in chat using `/slr config token <TOKEN>`. Do not redirect them to a terminal or hidden prompt. Do not claim setup is ready until the read-only connection check succeeds.
 
-If the user uses `/slr config token <TOKEN>`, pass the supplied token only to `slr_config_token`. It is permitted to receive the project token in chat for this explicit configuration command; do not redirect the user to a terminal. Do not unnecessarily repeat it in replies or put it into unrelated tools, drafts, or results. For production, verify the API base URL is `https://slr-api.hyperdatalab.org/api` and the token is current for that reviewer's project workspace. Rotation, disabling access, or switching agents invalidates the prior value. If the tool returns `ok: false`, show its safe `connection.status`, `connection.code`, and `connection.message` (or `error.code` and `error.message`) so the user can see why it failed. If the current token still gets `401`, ask the SLR administrator to verify the connection.
+If the user uses `/slr config token <TOKEN>`, pass the supplied token only to `slr_config_token`. It is permitted to receive the project token in chat for this explicit configuration command; do not redirect the user to a terminal or connector settings. Do not unnecessarily repeat it in replies or put it into unrelated tools, drafts, or results. The production API base URL is `https://slr-agent.hyperdatalab.org/api`. Rotation, disabling access, or switching agents invalidates the prior value. If the tool returns `ok: false`, show its safe `connection.status`, `connection.code`, and `connection.message` (or `error.code` and `error.message`) so the user can see why it failed. If the current token still gets `401`, report that the API rejected it for this endpoint.
 
 ## Config response
 
 `/slr config` should use the separate `slr-config` connector and remain concise:
 
 1. Call `slr_config_profiles`.
-2. For plain `/slr config`, ask the user to choose or create a profile, then call `slr_config_validate`; the connector reads `SLR_AGENT_TOKEN` from the host credential binding.
-3. For `/slr config token <TOKEN>`, call `slr_config_token` directly. It validates first, binds the encrypted credential, updates the profile, and enables both connectors without a second confirmation.
+2. For `/slr config url <URL>`, call `slr_config_url` directly. It saves the URL to the active profile without needing a token or credential binding.
+3. For `/slr config token <TOKEN>`, call `slr_config_token` directly. It validates the token supplied in chat, binds the host-managed credential automatically, updates the profile, and enables both connectors without a second confirmation.
 4. If `slr_config_token` reports multiple matching profiles, ask only for the safe profile name and retry with `profileName`; do not repeat the token in the response.
 
-If the config connector is unavailable or returns `CREDENTIAL_MISSING`, report `CONFIG_CONNECTOR_UNAVAILABLE` or the credential error, ask the user to reconnect the connector or start a new conversation, and never claim a profile changed without a successful commit.
+If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE` and never claim a profile changed without a successful tool result.
 
 ```text
 SLR profile configured

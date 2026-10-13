@@ -7,6 +7,7 @@ import {
   captureProfileStore,
   cancelTokenConfiguration,
   commitTokenConfiguration,
+  configureProfileUrl,
   ensureOpenScienceCredential,
   finalizeTokenConfiguration,
   listProfiles,
@@ -23,6 +24,7 @@ import {
   commitSchema,
   noArgumentsSchema,
   tokenConfigSchema,
+  urlConfigSchema,
   validateSchema,
 } from './schemas.js';
 
@@ -179,6 +181,24 @@ export function createServer(): McpServer {
       try {
         const env = environment();
         return jsonResult({ activeProfile: activeProfile(env), profiles: listProfiles(env) });
+      } catch (error) {
+        return safeError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'slr_config_url',
+    {
+      title: 'Set SLR API URL',
+      description: 'Save an approved SLR API base URL to the active local profile. Does not require or test a token and does not access connector credentials.',
+      inputSchema: urlConfigSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ profileName, apiBaseUrl }): Promise<ToolTextResult> => {
+      try {
+        const profile = configureProfileUrl(profileName, apiBaseUrl, environment());
+        return jsonResult({ ok: true, profile, next: 'Configure the project token with /slr config token <TOKEN> to test and activate review access.' });
       } catch (error) {
         return safeError(error);
       }

@@ -106,7 +106,7 @@ Tạo profile metadata và workspace mà không đưa token vào dòng lệnh:
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science profile create `
   --name afl-review `
-  --api-base-url https://slr-api.hyperdatalab.org/api `
+  --api-base-url https://slr-agent.hyperdatalab.org/api `
   --project-id <project-id> `
   --project-name "AFL review"
 
@@ -189,7 +189,7 @@ Setup quản lý runtime, skill, profile và connector. Khi chạy tương tác,
 
 | Tình huống | Cách xử lý |
 | --- | --- |
-| `401` | API từ chối project token. Production dùng `https://slr-api.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại trong AI workspace của đúng reviewer/project. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực. Nếu đúng endpoint và token hiện tại vẫn lỗi, nhờ SLR admin kiểm tra kết nối. |
+| `401` | API từ chối project token. Production dùng `https://slr-agent.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại trong AI workspace của đúng reviewer/project và nhập qua `/slr config token <TOKEN>`. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực. |
 | `404` | Task không còn trong phạm vi. Tải lại `/slr tasks` và chọn task đang được giao. |
 | `202` | Full-text extraction đang chạy. Chờ thời gian `Retry-After`; không poll liên tục. |
 | `409 FULLTEXT_STAGE_REQUIRED` | Không thử lại. Chỉ yêu cầu Markdown cho task `FULL_TEXT` có `markdownPath`. |

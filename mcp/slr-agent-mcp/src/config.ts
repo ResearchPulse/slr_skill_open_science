@@ -13,7 +13,7 @@ export interface McpConfig {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_JSON_RESPONSE_BYTES = 1 * 1024 * 1024;
 const DEFAULT_MARKDOWN_RESPONSE_BYTES = 8 * 1024 * 1024;
-const APPROVED_API_HOSTS = ['slr-api.hyperdatalab.org', 'localhost', '127.0.0.1', '[::1]', '::1'];
+const APPROVED_API_HOSTS = ['slr-agent.hyperdatalab.org', 'slr-api.hyperdatalab.org', 'localhost', '127.0.0.1', '[::1]', '::1'];
 
 function requiredValue(name: string, value: string | undefined): string {
   const normalized = value?.trim() || '';

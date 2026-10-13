@@ -23,6 +23,7 @@ The review connector exposes these five Claude-compatible tools:
 An optional separate `slr-config` connector exposes only these local configuration tools:
 
 - `slr_config_profiles`
+- `slr_config_url`
 - `slr_config_validate`
 - `slr_config_token`
 - `slr_config_commit`
@@ -39,7 +40,8 @@ Route these commands as follows:
 - `/slr status` — call `list_assigned_tasks` with `limit: 1` and report whether the connection works.
 - `/slr list` or `/slr tasks` — list assigned tasks; show only concise task and paper metadata.
 - `/slr drafts` — list local draft files; never treat a draft as submitted.
-- `/slr config` — use the separate local config connector to inspect profiles and configure the host-bound credential.
+- `/slr config` — use the separate local config connector to inspect profiles and configure the project token in chat.
+- `/slr config url <URL>` — save the API base URL to the active local profile; this does not require a connector credential or test the token.
 - `/slr config token <TOKEN>` — accept the project token directly in chat, validate it, and apply it through the config connector.
 - `/slr task <taskId>` — call `get_assigned_task`; use its `protocolSnapshot` as the criteria of record.
 - `/slr fulltext <taskId>` — call `get_assigned_task` first and call `get_task_fulltext` only when `stage` is `FULL_TEXT` and `markdownPath` is present; pass both returned values and honor `retryAfterSeconds` when pending.
@@ -107,12 +109,13 @@ Follow this sequence:
 `/slr config` uses the separate local `slr-config` MCP connector. It has two paths:
 
 1. Call `slr_config_profiles` and show only safe profile metadata.
-2. For plain `/slr config`, ask the user to choose/create a profile, then use the existing credential-bound `slr_config_validate` and `slr_config_commit` flow.
-3. For `/slr config token <TOKEN>`, call `slr_config_token` with the token and optional selected profile. The connector validates the token first, then automatically binds `SLR_AGENT_TOKEN`, saves/switches/updates the profile, and enables both connectors.
+2. For `/slr config url <URL>`, call `slr_config_url` to save the URL directly to the active profile. If there is no active profile, the tool creates `default`. Do not call `slr_config_validate` for URL-only changes.
+3. For plain `/slr config`, inspect profiles and explain how to set the URL with `/slr config url <URL>` or the token with `/slr config token <TOKEN>`; do not require users to pre-bind a connector credential.
+4. For `/slr config token <TOKEN>`, call `slr_config_token` with the token and optional selected profile. The tool validates the token supplied in chat, then automatically stores it in the host-managed credential and enables both connectors.
    - If the result has `ok: false`, inspect its structured `connection` or `error` fields. Report the safe HTTP `status`, `code`, and `message` exactly; these fields do not contain the token. Do not reduce the result to only `ok: false` or say there is no diagnostic when those fields are present.
    - If the result reports `CREDENTIAL_BINDING_FAILED` or `CONNECTOR_REGISTRATION_FAILED`, report that code and its safe reason. Do not say the API rejected the token unless the API connection result is actually a 401.
-4. If `slr_config_token` returns `PROFILE_SELECTION_REQUIRED`, show only the safe profile names and ask the user to choose one; retry the same command with `profileName`. Never repeat the token in the response.
-5. Treat invalid tokens, missing credentials, connector registration failures, and an unavailable config connector as incomplete setup. Do not claim a profile changed unless the tool returns success; do not provide a terminal/manual fallback for this command.
+5. If `slr_config_token` returns `PROFILE_SELECTION_REQUIRED`, show only the safe profile names and ask the user to choose one; retry the same command with `profileName`. Never repeat the token in the response.
+6. Treat invalid tokens and connector registration failures as incomplete setup. Do not claim a profile changed unless the tool returns success; do not provide a terminal/manual fallback for this command.
 
 If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE` and do not claim that the profile or connector changed. If only the review connector is unavailable, report `REVIEW_CONNECTOR_UNAVAILABLE`; when possible, inspect profile status with `slr_config_profiles` and explain the next setup step from that result. `/slr config` must never silently substitute the review connector's task tools.
 
@@ -122,7 +125,7 @@ The skill cannot install packages or change Open-Science connector settings as p
 
 ## Token input rule
 
-There is one project token. The SLR API uses it to identify the agent/project and scope task access. The user may provide it directly in chat with `/slr config token <TOKEN>`; pass it to `slr_config_token` without asking them to use a terminal or hidden prompt. Open-Science's encrypted Credential field `SLR_AGENT_TOKEN` stores and supplies that same value; it is not another token. Do not unnecessarily repeat the token in replies or save it in logs, profile metadata, connector JSON, drafts, or results. The config connector must validate it before binding; if that fails, no profile activation is claimed. The API base URL is plain connector configuration.
+There is one project token. The SLR API uses it to identify the agent/project and scope task access. The user may provide it directly in chat with `/slr config token <TOKEN>`; pass it to `slr_config_token` without asking them to use a terminal or manually configure connector credentials. Open-Science's encrypted Credential field `SLR_AGENT_TOKEN` is populated automatically after API validation; it is not another token. Do not unnecessarily repeat the token in replies or save it in logs, profile metadata, connector JSON, drafts, or results. The API base URL is configured separately with `/slr config url <URL>` and does not require a token.
 
 Submission from `/slr submit` and `/slr auto` is still the same final,
 confirmation-gated MCP operation; these commands do not create a second write path.

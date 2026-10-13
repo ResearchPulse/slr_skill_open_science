@@ -13,7 +13,7 @@ import {
 } from './profile-store.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
-const DEFAULT_API_BASE_URL = 'https://slr-api.hyperdatalab.org/api';
+const DEFAULT_API_BASE_URL = 'https://slr-agent.hyperdatalab.org/api';
 const pendingConfigurations = new Map();
 
 function existingProfile(name, environment) {

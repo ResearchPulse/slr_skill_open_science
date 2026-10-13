@@ -18,7 +18,9 @@ Authorization: Bearer <project-agent-token>
 
 The token scopes requests to one agent, one project, and one reviewer workspace. The server rejects inactive tokens and does not return tasks belonging to another reviewer or project. Never put the token in source code or logs.
 
-For the production SLR deployment, use `https://slr-api.hyperdatalab.org/api` as the API base URL. The token must be the current `slrp_...` token shown in the same reviewer's **My AI review workspace** for the intended project. Rotating the token, disabling access, or switching agents invalidates the old token; retrieve the current token from that workspace before reconnecting the MCP credential.
+For the production SLR deployment, use `https://slr-agent.hyperdatalab.org/api` as the API base URL. The token must be the current `slrp_...` token shown in the same reviewer's **My AI review workspace** for the intended project. Rotating the token, disabling access, or switching agents invalidates the old token; retrieve the current token from that workspace before configuring it with `/slr config token <TOKEN>`.
+
+Deployment check (2026-10-13): `https://slr-agent.hyperdatalab.org/api/health` responds successfully, and its agent task route responds with `401` when called without an Authorization token. The token supplied during troubleshooting was rejected as invalid or inactive at this host. Use a current token issued by the same deployment; API URL can be saved from chat with `/slr config url https://slr-agent.hyperdatalab.org/api`.
 
 All JSON success responses use this envelope:
 
@@ -207,7 +209,7 @@ Successful submission returns HTTP `200`, the updated task, and sets its status 
 | HTTP status | Typical cause |
 | --- | --- |
 | `400` | Invalid `limit`, cursor, or result body |
-| `401` | Missing, malformed, rotated, inactive, or issued for a different agent/reviewer/project. Confirm the API base URL is `https://slr-api.hyperdatalab.org/api` and retrieve the current `slrp_...` token from the same reviewer's project workspace. Rotating, disabling, or switching agents invalidates an older token. |
+| `401` | Missing, malformed, rotated, inactive, or issued for a different agent/reviewer/project. Confirm the API base URL is `https://slr-agent.hyperdatalab.org/api` and retrieve the current `slrp_...` token from the same reviewer's project workspace. Rotating, disabling, or switching agents invalidates an older token. |
 | `404` | Task does not exist or is outside the token's agent/project scope |
 | `409` | Task already completed or full-text content unavailable |
 | `500` | Unexpected backend error; retry with backoff |

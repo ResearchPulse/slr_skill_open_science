@@ -34,11 +34,11 @@ export function normalizeApiBaseUrl(raw) {
   }
   const hostname = parsed.hostname.toLowerCase();
   const loopback = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-  const productionHost = 'slr-api.hyperdatalab.org';
+  const productionHosts = new Set(['slr-agent.hyperdatalab.org', 'slr-api.hyperdatalab.org']);
   if (parsed.protocol === 'http:' && !loopback.has(hostname)) {
     throw new Error('api base URL must use HTTPS unless it targets local loopback development');
   }
-  if (!loopback.has(hostname) && hostname !== productionHost) {
+  if (!loopback.has(hostname) && !productionHosts.has(hostname)) {
     throw new Error(`api base URL host is not allowed: ${parsed.hostname}`);
   }
   return parsed.toString().replace(/\/+$/, '');
