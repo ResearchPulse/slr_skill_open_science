@@ -20,7 +20,7 @@ npx github:ResearchPulse/slr_skill_open_science
 </div>
 
 ---
-Current connector model: setup prepares two local MCP connectors. The review connector exposes the five Claude-compatible screening tools plus the Phase-2 extraction tools; the separate `slr-config` connector is used only by `/slr config` and reads `SLR_AGENT_TOKEN` from an encrypted Open-Science Credential binding. When the Open-Science CLI is available, setup creates or updates the `SLR_AGENT_TOKEN` Credential and binds it to both connectors automatically. Node is used for the one-time `npx` installer; both long-lived MCP processes run the bundled Python stdlib scripts directly. Setup stages a stable runtime under `~/.slr/runtimes/<fingerprint>`, so a connector never re-runs `npx` against a locked `_npx` cache on Windows.
+Current connector model: setup prepares two local MCP connectors. The review connector exposes the Claude-compatible screening and extraction tools and receives `SLR_AGENT_TOKEN` through the encrypted Open-Science Credential. The separate `slr-config` connector accepts the project token as an explicit chat tool argument and does not receive or bind that credential. URL changes save to the local profile without changing connector settings. Node is used for the one-time `npx` installer; both long-lived MCP processes run the bundled Python stdlib scripts directly. Setup stages a stable runtime under `~/.slr/runtimes/<fingerprint>`, so a connector never re-runs `npx` against a locked `_npx` cache on Windows.
 
 ## 📑 Mục lục
 
@@ -241,7 +241,7 @@ It exposes `slr_config_profiles`, `slr_config_validate`, `slr_config_token`, `sl
 From the package root:
 
 ```powershell
-$env:SLR_API_BASE_URL = "https://slr-api.hyperdatalab.org/api"
+$env:SLR_API_BASE_URL = "https://slr-agent.hyperdatalab.org/api"
 $env:SLR_AGENT_TOKEN = "<project-token>"
 python scripts/slr_mcp.py
 ```

@@ -118,7 +118,7 @@ If the user uses `/slr config token <TOKEN>`, pass the supplied token only to `s
 
 1. Call `slr_config_profiles`.
 2. For `/slr config url <URL>`, call `slr_config_url` directly. It saves the URL to the active profile without needing a token or credential binding.
-3. For `/slr config token <TOKEN>`, call `slr_config_token` directly. It validates the token supplied in chat, binds the host-managed credential automatically, updates the profile, and enables both connectors without a second confirmation.
+3. For `/slr config token <TOKEN>`, call `slr_config_token` directly. It validates the token supplied in chat, stores it in the host-managed credential for the review connector, updates the profile, and ensures both connectors are enabled. The config connector does not receive a token credential.
 4. If `slr_config_token` reports multiple matching profiles, ask only for the safe profile name and retry with `profileName`; do not repeat the token in the response.
 
 If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE` and never claim a profile changed without a successful tool result.

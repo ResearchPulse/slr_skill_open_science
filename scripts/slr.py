@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-DEFAULT_API_BASE_URL = "https://slr-api.hyperdatalab.org/api"
+DEFAULT_API_BASE_URL = "https://slr-agent.hyperdatalab.org/api"
 DEFAULT_TIMEOUT_MS = 30_000
 DEFAULT_JSON_RESPONSE_BYTES = 24 * 1024 * 1024
 DEFAULT_MARKDOWN_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -35,7 +35,7 @@ MAX_RESULT_BODY_BYTES = 30 * 1024
 MAX_REASONING = 16_000
 MAX_DECISION = 100
 RETRYABLE_STATUSES = {500, 502}
-APPROVED_API_HOSTS = {"slr-api.hyperdatalab.org", "localhost", "127.0.0.1", "::1"}
+APPROVED_API_HOSTS = {"slr-agent.hyperdatalab.org", "slr-api.hyperdatalab.org", "localhost", "127.0.0.1", "::1"}
 PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 OPERATION_ID_RE = re.compile(r"^[a-f0-9-]{16,80}$", re.I)
 
@@ -136,6 +136,20 @@ def normalize_api_base_url(raw: str | None, allowed_hosts: Iterable[str] | None 
     if parsed.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
         raise ApiError("api base URL must use HTTPS unless it targets local loopback development", code="VALIDATION")
     return text.rstrip("/")
+
+
+def migrate_legacy_production_api_url(raw: str | None) -> str | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(text)
+        if (parsed.hostname or "").lower() != "slr-api.hyperdatalab.org":
+            return text
+        port = f":{parsed.port}" if parsed.port else ""
+        return urllib.parse.urlunsplit(parsed._replace(netloc=f"slr-agent.hyperdatalab.org{port}")).rstrip("/")
+    except ValueError:
+        return text
 
 
 def _parse_int_env(name: str, raw: str | None, default: int, minimum: int, maximum: int) -> int:
@@ -757,7 +771,7 @@ def connector_script_path(name: str) -> Path:
 def connector_config(profile: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": profile.get("connectorName") or f"slr-{profile.get('name')}",
-        "displayName": f"SLR ({profile.get('projectName') or profile.get('name')})",
+        "displayName": f"SLR ({profile.get('name')})",
         "transport": "stdio",
         "command": sys.executable,
         "args": [str(connector_script_path("slr_mcp.py"))],
@@ -773,7 +787,6 @@ def config_connector_config(credential_id: str | None = None) -> dict[str, Any]:
         "transport": "stdio",
         "command": sys.executable,
         "args": [str(connector_script_path("slr_config_mcp.py"))],
-        **({"envCredentialIds": {"SLR_AGENT_TOKEN": credential_id}} if credential_id else {}),
     }
 
 
@@ -853,13 +866,35 @@ def register_connector_definition(connector: dict[str, Any], report: dict[str, A
     code, stdout, stderr, error = run_json_command(executable, ["connector", "list", "--json"])
     if error or code != 0:
         return {"registered": False, "reason": f"open-science-connector-list-failed:{failure_code(stdout, stderr) or 'unknown'}"}
-    records = parse_json_output(stdout)
-    if isinstance(records, dict):
-        records = records.get("connectors") or records.get("data", {}).get("connectors") or records.get("data") or []
-    records = records if isinstance(records, list) else []
+    listed = parse_json_output(stdout)
+    records: list[dict[str, Any]] = []
+    if isinstance(listed, dict):
+        for key in ("customServers", "connectors"):
+            child = listed.get(key)
+            if isinstance(child, list):
+                records.extend(item for item in child if isinstance(item, dict))
+        data = listed.get("data")
+        if isinstance(data, dict):
+            for key in ("customServers", "connectors"):
+                child = data.get(key)
+                if isinstance(child, list):
+                    records.extend(item for item in child if isinstance(item, dict))
+    elif isinstance(listed, list):
+        records = [item for item in listed if isinstance(item, dict)]
     existing = next((item for item in records if isinstance(item, dict) and (item.get("name") == connector.get("name") or item.get("id") == connector.get("name"))), None)
+    expected_credentials = set((connector.get("envCredentialIds") or {}).keys())
+    if existing and existing.get("command") == connector.get("command") and existing.get("args") == connector.get("args") and existing.get("displayName") == connector.get("displayName") and existing.get("transport") == connector.get("transport"):
+        visible_credentials = existing.get("environmentNames")
+        if not isinstance(visible_credentials, list) or set(visible_credentials) == expected_credentials:
+            connector_id = existing.get("id") or connector.get("name")
+            if existing.get("enabled") is True:
+                return {"registered": True, "enabled": True, "connector": connector_id, "updated": False}
+            code, _, stderr, error = run_json_command(executable, ["connector", "enable", str(connector_id)])
+            if error or code != 0:
+                return {"registered": True, "enabled": False, "connector": connector_id, "reason": "open-science-connector-enable-failed"}
+            return {"registered": True, "enabled": True, "connector": connector_id, "updated": False}
     if existing:
-        args = ["connector", "update", str(existing.get("id")), "--json"]
+        args = ["connector", "update", str(existing.get("id"))]
         operation = "update"
     else:
         args = ["connector", "add", "--json"]
@@ -869,6 +904,18 @@ def register_connector_definition(connector: dict[str, Any], report: dict[str, A
         return {"registered": False, "reason": f"open-science-connector-{operation}-failed:{failure_code(stdout, stderr) or 'unknown'}"}
     result = parse_json_output(stdout) or {}
     connector_id = (existing or {}).get("id") or result.get("id") or result.get("connectorId") or (result.get("connector") or {}).get("id")
+    if not connector_id:
+        refreshed_code, refreshed_stdout, _, _ = run_json_command(executable, ["connector", "list", "--json"])
+        refreshed = parse_json_output(refreshed_stdout) if refreshed_code == 0 else None
+        candidates = []
+        if isinstance(refreshed, dict):
+            for key in ("customServers", "connectors"):
+                if isinstance(refreshed.get(key), list):
+                    candidates.extend(item for item in refreshed[key] if isinstance(item, dict))
+        if isinstance(refreshed, list):
+            candidates.extend(item for item in refreshed if isinstance(item, dict))
+        match = next((item for item in candidates if item.get("name") == connector.get("name") or item.get("id") == connector.get("name")), None)
+        connector_id = (match or {}).get("id")
     if not connector_id:
         return {"registered": False, "reason": "open-science-connector-id-missing"}
     code, _, stderr, error = run_json_command(executable, ["connector", "enable", str(connector_id)])
@@ -884,9 +931,7 @@ def register_connector(profile: dict[str, Any], report: dict[str, Any]) -> dict[
 
 
 def register_config_connector(credential_id: str | None, report: dict[str, Any]) -> dict[str, Any]:
-    if not credential_id:
-        return {"registered": False, "reason": "credential-binding-missing"}
-    return register_connector_definition(config_connector_config(credential_id), report)
+    return register_connector_definition(config_connector_config(), report)
 
 
 def operation_expiry(minutes: int = 10) -> str:

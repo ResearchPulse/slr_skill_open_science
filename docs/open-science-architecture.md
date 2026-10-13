@@ -91,7 +91,7 @@ The installer is intentionally small and cross-platform:
 2. Copy or update the `/slr` skill through the supported local skill/import path.
 3. Create or update secret-free API/profile metadata without requesting a token.
 4. Register and enable the local config connector.
-5. If a project token is supplied during interactive installation or `/slr config token`, validate it, bind that same token as the encrypted `SLR_AGENT_TOKEN` Credential, and register/enable both connectors.
+5. If a project token is supplied during interactive installation or `/slr config token`, validate it, store that same token as the encrypted `SLR_AGENT_TOKEN` Credential for the review connector, and register/enable both connectors. The config connector accepts the token as a tool argument and does not bind the credential.
 6. Use the selected profile when starting the root MCP launcher.
 
 The installer must never put a raw token in command-line arguments, generated skill content, printed configuration, profile metadata, ordinary JSON files, drafts, audit records, or ordinary chat. The token may be entered only through the hidden installer prompt or explicit `/slr config token` flow. The host-managed encrypted `SLR_AGENT_TOKEN` Credential is the storage/binding for that one project token, injected into the connectors.

@@ -133,7 +133,7 @@ function connectorConfig(profile, runtimePackageRoot = resolve(fileURLToPath(new
 }
 
 function configConnectorConfig(
-  credentialId = undefined,
+  _credentialId = undefined,
   runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
 ) {
   const runtime = connectorRuntimeArgs(runtimePackageRoot, 'slr_config_mcp.py');
@@ -143,7 +143,6 @@ function configConnectorConfig(
     transport: 'stdio',
     command: runtime.command,
     args: runtime.args,
-    ...(credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: credentialId } } : {}),
   };
 }
 
@@ -454,14 +453,13 @@ export function registerConnector(
 }
 
 export function registerConfigConnector(
-  credentialId,
+  _credentialId,
   report,
   run = openScienceCommand,
   ensureDaemon = ensureOpenScienceDaemon,
   runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
 ) {
-  if (!credentialId) return { registered: false, reason: 'credential-binding-missing' };
-  return registerConnectorDefinition(configConnectorConfig(credentialId, runtimePackageRoot), report, run, ensureDaemon);
+  return registerConnectorDefinition(configConnectorConfig(undefined, runtimePackageRoot), report, run, ensureDaemon);
 }
 
 function profileOptions(args) {

@@ -144,7 +144,7 @@ The skill cannot install packages or change Open-Science connector settings as p
 
 ## Token input rule
 
-There is one project token. The SLR API uses it to identify the agent/project and scope task access. The user may provide it directly in chat with `/slr config token <TOKEN>`; pass it to `slr_config_token` without asking them to use a terminal or hidden prompt. Open-Science's encrypted Credential field `SLR_AGENT_TOKEN` is populated automatically after API validation and stores/supplies that same value; it is not another token. Never repeat, display, summarize, log, persist in profile metadata, connector JSON, drafts, or results. The config connector must validate it before binding; if that fails, no profile activation is claimed. The API base URL is configured separately with `/slr config url <URL>` and does not require a token.
+There is one project token. The SLR API uses it to identify the agent/project and scope task access. The user may provide it directly in chat with `/slr config token <TOKEN>`; pass it to `slr_config_token` without asking them to use a terminal or connector settings. After API validation, Open-Science stores that same value in its encrypted Credential and binds it only to the review connector. The config connector receives the token as a tool argument and does not need a credential binding. Never repeat, display, summarize, log, persist in profile metadata, connector JSON, drafts, or results. If validation fails, do not claim that the profile changed. The API base URL is configured separately with `/slr config url <URL>` and does not require a token.
 
 Submission from `/slr submit` and `/slr auto` is still the same final,
 confirmation-gated MCP operation; these commands do not create a second write path.

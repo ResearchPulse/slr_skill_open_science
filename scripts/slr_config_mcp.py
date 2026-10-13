@@ -25,6 +25,7 @@ from slr import (
     activate_profile,
     capture_profile_store,
     commit_profile_configuration,
+    create_or_update_profile,
     find_profiles_by_project_id,
     find_profiles_by_token,
     active_profile,
@@ -33,6 +34,7 @@ from slr import (
     open_science_report,
     normalize_api_base_url,
     normalize_profile_name,
+    migrate_legacy_production_api_url,
     operation_expiry,
     redact_secret,
     register_config_connector,
@@ -71,6 +73,16 @@ TOOLS = [
         "description": "List safe local SLR profile metadata. Tokens and secret files are never returned.",
         "inputSchema": _schema({}),
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "slr_config_url",
+        "title": "Set SLR API URL",
+        "description": "Save an approved SLR API URL to the active local profile. This does not require a token or change connector credentials.",
+        "inputSchema": _schema({
+            "profileName": _string("Optional profile to update; defaults to the active profile or default.", 1, 64),
+            "apiBaseUrl": _string("Approved SLR API base URL to save.", 1, 2048),
+        }, ["apiBaseUrl"]),
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
     {
         "name": "slr_config_validate",
@@ -165,6 +177,11 @@ def _optional_text(args: dict[str, Any], key: str, maximum: int) -> None:
 def _validate_tool_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "slr_config_profiles":
         return _strict_object(args, set())
+    if name == "slr_config_url":
+        value = _strict_object(args, {"profileName", "apiBaseUrl"}, {"apiBaseUrl"})
+        _optional_text(value, "profileName", 64)
+        _optional_text(value, "apiBaseUrl", 2048)
+        return value
     if name == "slr_config_validate":
         value = _strict_object(args, {"profileName", "apiBaseUrl"})
         _optional_text(value, "profileName", 64)
@@ -260,7 +277,7 @@ def _begin(profile_name: str | None, api_base_url: str | None, token: str, env: 
             existing = None
         else:
             raise
-    candidate_url = normalize_api_base_url(api_base_url or (existing or {}).get("apiBaseUrl") or DEFAULT_API_BASE_URL)
+    candidate_url = normalize_api_base_url(api_base_url or migrate_legacy_production_api_url((existing or {}).get("apiBaseUrl")) or DEFAULT_API_BASE_URL)
     candidate_token = str(token or "").strip()
     if not candidate_token:
         raise ApiError("agent token must not be empty", code="VALIDATION")
@@ -313,7 +330,7 @@ def _complete(operation_id: str, action: str, profile_name: str | None, token: s
         except ApiError as error:
             if error.code != "CONFIG" or "not found" not in error.message.lower() or candidates:
                 raise
-        profile = commit_profile_configuration(target_name, {"apiBaseUrl": (current or {}).get("apiBaseUrl") or metadata["apiBaseUrl"], "projectId": metadata["connection"].get("projectId"), "projectName": metadata["connection"].get("projectName"), "credentialId": credential["credentialId"], "credentialFingerprint": token_fingerprint(token)}, env)
+        profile = commit_profile_configuration(target_name, {"apiBaseUrl": metadata["apiBaseUrl"], "projectId": metadata["connection"].get("projectId"), "projectName": metadata["connection"].get("projectName"), "credentialId": credential["credentialId"], "credentialFingerprint": token_fingerprint(token)}, env)
         review = register_connector(profile, report)
         config = register_config_connector(str(credential["credentialId"]), report)
         if review.get("registered") is not True or review.get("enabled") is not True or config.get("registered") is not True or config.get("enabled") is not True:
@@ -336,6 +353,10 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     env = _env()
     if name == "slr_config_profiles":
         return _json_result({"activeProfile": active_profile(env), "profiles": list_profiles(env)})
+    if name == "slr_config_url":
+        profile_name = args.get("profileName") or (active_profile(env) or {}).get("name") or "default"
+        profile = create_or_update_profile(profile_name, normalize_api_base_url(args["apiBaseUrl"]), env)
+        return _json_result({"ok": True, "profile": profile, "next": "Open a new conversation to reload the review connector with this API URL."})
     if name == "slr_config_validate":
         token = str(env.get("SLR_AGENT_TOKEN") or "").strip()
         if not token:
