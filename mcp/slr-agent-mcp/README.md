@@ -22,7 +22,7 @@ The token is sent only as an `Authorization: Bearer` header. Do not put it in pr
 ```bash
 SLR_API_BASE_URL=https://<backend-host>/api \
 SLR_AGENT_TOKEN=<project-token> \
-npx slr-agent-mcp
+python ../../scripts/slr_mcp.py --profile <profile-name>
 ```
 
 On Windows PowerShell:
@@ -30,10 +30,10 @@ On Windows PowerShell:
 ```powershell
 $env:SLR_API_BASE_URL = "https://<backend-host>/api"
 $env:SLR_AGENT_TOKEN = "<project-token>"
-npx slr-agent-mcp
+python ../../scripts/slr_mcp.py --profile <profile-name>
 ```
 
-The process communicates over stdio. Protocol messages use stdout; diagnostics use stderr.
+The released process communicates over stdio. Protocol messages use stdout; diagnostics use stderr. The TypeScript package remains for transition/parity tests; Open-Science production connectors use the Python runtime.
 
 ## Exposed tools
 
@@ -42,8 +42,14 @@ The process communicates over stdio. Protocol messages use stdout; diagnostics u
 - `get_assigned_task`
 - `get_task_fulltext`
 - `submit_review_result`
+- `get_extraction_context`
+- `get_extraction_fulltext`
+- `save_extraction_draft`
+- `check_extraction_draft`
+- `submit_extraction_draft`
+- `finalize_extraction_consensus`
 
-The last tool is a write operation. The Open-Science skill shows the exact draft and asks the user for one `confirm` or `cancel`, then makes the first safe call. That call returns a digest and sends no backend request; the skill automatically repeats it with `confirmation: { confirm: true, digest }`, without a second prompt. Only then does the server send the backend POST. The digest handshake remains enforced even when the host does not support MCP elicitation.
+Submission and consensus proposal are write operations. The Open-Science skill shows the exact draft and asks the user for one `confirm` or `cancel`; the MCP adapter then handles the backend challenge/digest handshake without a second prompt. Successful extraction writes are isolated pending proposals; canonical reviewer/consensus records still require the human web workflow.
 
 `get_task_fulltext` requires `taskId`, `stage: "FULL_TEXT"`, and the `markdownPath` returned by `get_assigned_task`. Do not call it for `TITLE_ABSTRACT` tasks. The backend independently enforces task ownership, stage, and Markdown availability; `202` includes the retry delay and `409 FULLTEXT_STAGE_REQUIRED` must not be retried.
 
@@ -56,4 +62,4 @@ npm test
 npm run compile
 ```
 
-The compiled entrypoint is `out/index.js`.
+The compiled TypeScript entrypoint is `out/index.js` for local parity tests only; it is not the production Open-Science connector runtime.

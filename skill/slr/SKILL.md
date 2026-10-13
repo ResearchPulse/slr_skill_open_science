@@ -1,6 +1,6 @@
 ---
 name: slr
-description: Use this skill when connecting Open-Science to an SLR project, listing assigned review papers, reading full text, drafting screening decisions, configuring profiles, or submitting a result through the local SLR MCP servers.
+description: Use this skill when connecting Open-Science to an SLR project, listing assigned review papers, reading full text, drafting screening or extraction results, configuring profiles, or submitting a result through the local SLR MCP servers.
 version: 0.1.0
 ---
 
@@ -8,17 +8,26 @@ version: 0.1.0
 
 Use this skill to operate the SLR project through the local MCP server. The skill handles task discovery, project criteria, paper reading, review drafting, and safe result submission.
 
-This skill handles assigned-paper screening and local project-profile workflows in the connected SLR project. It does not search for papers, change project settings, download arbitrary URLs, or bypass the confirmation boundary. The SLR web application remains the source of truth for project creation, agent connection, paper assignment, token rotation, and final task state.
+This skill handles assigned-paper screening, Phase-2 extraction, and local project-profile workflows in the connected SLR project. It does not search for papers, change project settings, download arbitrary URLs, or bypass the confirmation boundary. The SLR web application remains the source of truth for project creation, agent connection, paper assignment, token rotation, and final task state.
 
 ## Available MCP tools
 
-The review connector exposes these five Claude-compatible tools:
+The review connector exposes these five Claude-compatible screening tools:
 
 - `list_assigned_tasks`
 - `connection_test`
 - `get_assigned_task`
 - `get_task_fulltext`
 - `submit_review_result`
+
+It also exposes extraction tools:
+
+- `get_extraction_context`
+- `get_extraction_fulltext`
+- `save_extraction_draft`
+- `check_extraction_draft`
+- `submit_extraction_draft`
+- `finalize_extraction_consensus`
 
 An optional separate `slr-config` connector exposes only these local configuration tools:
 
@@ -47,6 +56,7 @@ Route these commands as follows:
 - `/slr fulltext <taskId>` — call `get_assigned_task` first and call `get_task_fulltext` only when `stage` is `FULL_TEXT` and `markdownPath` is present; pass both returned values and honor `retryAfterSeconds` when pending.
 - `/slr review <taskId>` — run the review state machine below.
 - `/slr review next` — choose the first eligible `ASSIGNED` task; `TITLE_ABSTRACT` is eligible from title/abstract, while `FULL_TEXT` requires available Markdown. Process one task only.
+- `/slr extract <taskId>` — read one `taskKind: extraction` task, build a field-value/evidence draft, run checks, and submit only after one confirmation.
 - `/slr review [N|ids]` — review the first N or the selected task ids, never auto-submit.
 - `/slr drafts` — list local review drafts and their decisions.
 - `/slr edit <taskId> <instruction>` — revise a local draft, then show the exact changed payload.
@@ -66,8 +76,10 @@ After every successful command, finish with a visible `Suggested next actions` b
 - `/slr task <taskId>`: for `TITLE_ABSTRACT`, suggest `/slr review <taskId>` using title and abstract; for `FULL_TEXT`, suggest review only when Markdown is available, otherwise suggest the returned wait/upload action.
 - `/slr fulltext <taskId>`: request Markdown only for `FULL_TEXT` tasks with `markdownPath`; if available, suggest `/slr review <taskId>`, and for pending or unavailable text suggest only the wait/upload action.
 - `/slr review <taskId>`: prepare the exact payload, show the draft, and ask for one `confirm` or `cancel`. After `confirm`, make the safe call and complete the digest-bound call automatically; do not ask for a second confirmation.
+- `/slr extract <taskId>`: call `get_extraction_context`, then `get_extraction_fulltext`, save the isolated field-value/evidence draft, call `check_extraction_draft`, and show the exact draft. Ask for one `confirm` or `cancel`; after `confirm`, call `submit_extraction_draft` with the unchanged task id and returned digest. Never call the screening submission tool for an extraction task.
 - After a successful submission: suggest `/slr tasks` to choose the next assigned paper and `/slr status` to refresh project state.
 - After `cancel`, report that nothing was submitted and suggest `/slr task <taskId>` or `/slr tasks` if the user wants to choose another paper.
+- After a successful extraction submission: suggest `/slr tasks`; if the draft check is `BLOCK`, fix the draft and rerun `/slr extract <taskId>`.
 
 ## Claude-compatible command surface
 
@@ -150,6 +162,20 @@ If a `FULL_TEXT` task has no `markdownPath`, or `get_task_fulltext` reports Mark
 An AI result completes only the assigned AI task. It does not create or change a human screening decision, paper status, or Human-vs-Human conflict. Describe submitted content as an AI recommendation, not a final human decision.
 
 If the user changes the task, changes the draft, answers ambiguously, or says no, return to `REVIEW_DRAFT` or stop without calling the write tool.
+
+## Extraction state machine
+
+1. `TASK_KIND`: select only an `ASSIGNED` task with explicit `taskKind: "extraction"`. Do not infer extraction from missing metadata; legacy missing/ambiguous kinds are repaired only by the backend's explicit bounded migration.
+2. `EXTRACTION_CONTEXT`: call `get_extraction_context` and use the immutable `templateSnapshot` and assignment as the schema of record.
+3. `EXTRACTION_READING`: call `get_extraction_fulltext` once. Use only its normalized Markdown and `coordinateMap`; preserve `sourceAssetId`, `sourceRevision`, and `sourceHash` in every evidence reference.
+4. `EXTRACTION_DRAFT`: produce a field-value table bound to the assignment's `templateVersion`. Every populated field should have a bounded quote and normalized start/end offsets when the paper supports it. PDF page is supplemental metadata, not the primary coordinate.
+5. `EXTRACTION_PERSISTENCE`: call `save_extraction_draft`. This is an isolated agent draft and must not be described as a reviewer submission.
+6. `EXTRACTION_CHECK`: call `check_extraction_draft`. A `BLOCK` result stops the workflow; `WARN` must be shown to the user before confirmation.
+7. `EXTRACTION_CONFIRMATION`: show the exact field-value/evidence payload and ask once for `confirm` or `cancel`.
+8. `EXTRACTION_SUBMIT`: after `confirm`, call `submit_extraction_draft` with the unchanged task id and digest. The tool handles the one-time backend challenge and idempotency key; do not ask for a second user confirmation.
+9. `EXTRACTION_RECEIPT`: only a successful MCP response means an isolated proposal was recorded. Report `PENDING_HUMAN_PROMOTION`; never describe it as the canonical reviewer record. Then suggest `/slr tasks` and the human web promotion step.
+
+Extraction submissions and leader consensus proposals are separate writes. `finalize_extraction_consensus` requires a leader-scoped capability and its confirmation does not finalize consensus; official finalization remains separately gated. Before either proposal is accepted, the backend revalidates template ID/version, source asset/revision/hash, evidence coordinates/quotes, and the expected canonical base/consensus version. A successful extraction submission returns `PENDING_HUMAN_PROMOTION`, never an official reviewer record.
 
 ## Draft format
 

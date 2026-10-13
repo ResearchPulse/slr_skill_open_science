@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -120,11 +120,13 @@ try {
 
   const installedRoot = join(installRoot, 'node_modules', 'slr-skill-open-science');
   const installedBin = join(installedRoot, 'bin', 'install.js');
-  const installedServer = join(installedRoot, 'mcp', 'slr-agent-mcp', 'out', 'server.js');
-  const installedConfigServer = join(installedRoot, 'mcp', 'slr-config-mcp', 'out', 'index.js');
+  const installedPythonRuntime = join(installedRoot, 'scripts', 'slr.py');
+  const installedPythonServer = join(installedRoot, 'scripts', 'slr_mcp.py');
+  const installedPythonConfigServer = join(installedRoot, 'scripts', 'slr_config_mcp.py');
 
-  if (!existsSync(installedBin) || !existsSync(installedServer) || !existsSync(installedConfigServer)) {
-    throw new Error('clean install is missing the root bin or compiled MCP servers');
+  if (!existsSync(installedBin)
+    || !existsSync(installedPythonRuntime) || !existsSync(installedPythonServer) || !existsSync(installedPythonConfigServer)) {
+    throw new Error('clean install is missing the root bin or MCP runtime assets');
   }
 
   run(process.execPath, [installedBin, 'doctor', '--json'], packageRoot);
@@ -132,12 +134,6 @@ try {
   runExpectedFailure(process.execPath, [installedBin, 'unknown-pack-smoke-secret'], packageRoot, 'unknown-pack-smoke-secret');
   runMcpStartupProbe(installedBin, packageRoot);
   runConfigMcpStartupProbe(installedBin, packageRoot);
-  run(process.execPath, [
-    '--input-type=module',
-    '-e',
-    `await import(${JSON.stringify(pathToFileURL(installedServer).href)}); console.log('mcp-runtime-dependencies-ok');`,
-  ], packageRoot);
-
   console.log(`pack smoke passed: ${tarballName}`);
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });

@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { getActiveProfile, getProfile } from '../cli/profile-store.js';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,17 +43,43 @@ function resolveMcpEnvironment(mcpArgs) {
   return environment;
 }
 
+function findPython() {
+  const probe = 'import sys;print(sys.version_info[0],sys.version_info[1]);print(sys.executable)';
+  const candidates = process.platform === 'win32'
+    ? [['py', '-3'], ['python'], ['python3']]
+    : [['python3'], ['python']];
+  for (const [command, ...prefix] of candidates) {
+    const result = spawnSync(command, [...prefix, '-c', probe], {
+      encoding: 'utf8',
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 3_000,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0 || !result.stdout) continue;
+    const [versionLine, executable] = result.stdout.trim().split(/\r?\n/);
+    const [major, minor] = String(versionLine || '').split(' ').map(Number);
+    if (major === 3 && minor >= 8 && executable) return executable.trim();
+  }
+  return null;
+}
+
 function runMcp(mcpArgs) {
-  const entrypoint = resolve(packageRoot, 'mcp', 'slr-agent-mcp', 'out', 'index.js');
+  const entrypoint = resolve(packageRoot, 'scripts', 'slr_mcp.py');
   if (!existsSync(entrypoint)) {
-    fail('MCP build is missing. Run npm run compile:mcp from the package root first.');
+    fail('Python MCP runtime is missing from the package. Reinstall the package.');
     return;
   }
 
   const environment = resolveMcpEnvironment(mcpArgs);
   if (!environment) return;
+  const python = findPython();
+  if (!python) {
+    fail('Python 3.8+ is required for the SLR MCP runtime.');
+    return;
+  }
 
-  const child = spawn(process.execPath, [entrypoint, ...mcpArgs], {
+  const child = spawn(python, [entrypoint, ...mcpArgs], {
     cwd: packageRoot,
     env: environment,
     shell: false,
@@ -71,13 +97,19 @@ function runMcp(mcpArgs) {
 }
 
 function runConfigMcp(mcpArgs) {
-  const entrypoint = resolve(packageRoot, 'mcp', 'slr-config-mcp', 'out', 'index.js');
+  const entrypoint = resolve(packageRoot, 'scripts', 'slr_config_mcp.py');
   if (!existsSync(entrypoint)) {
-    fail('config MCP build is missing. Run npm run compile:config-mcp from the package root first.');
+    fail('Python config MCP runtime is missing from the package. Reinstall the package.');
     return;
   }
 
-  const child = spawn(process.execPath, [entrypoint, ...mcpArgs], {
+  const python = findPython();
+  if (!python) {
+    fail('Python 3.8+ is required for the SLR config MCP runtime.');
+    return;
+  }
+
+  const child = spawn(python, [entrypoint, ...mcpArgs], {
     cwd: packageRoot,
     env: { ...globalThis.process['env'] },
     shell: false,

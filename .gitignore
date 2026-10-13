@@ -1,5 +1,6 @@
 mcp/**/node_modules/
 /node_modules/
+__pycache__/
 mcp/**/out/
 mcp/**/coverage/
 mcp/**/.npm-cache/

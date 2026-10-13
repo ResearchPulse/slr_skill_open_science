@@ -9,13 +9,12 @@
   "files": [
     "bin",
     "cli",
+    "scripts/slr.py",
+    "scripts/slr_mcp.py",
+    "scripts/slr_config_mcp.py",
     "docs/SLR_MCP_OPEN_SCIENCE_SETUP.md",
     "docs/open-science-architecture.md",
     "skill",
-    "mcp/slr-agent-mcp/out",
-    "mcp/slr-agent-mcp/package.json",
-    "mcp/slr-config-mcp/out",
-    "mcp/slr-config-mcp/package.json",
     "README.md"
   ],
   "workspaces": [
@@ -33,7 +32,7 @@
     "test:cli": "node --test tests/*.test.mjs",
     "test": "npm run test:cli && npm run test:mcp && npm run test:config-mcp",
     "pack:check": "npm run compile:mcp && npm run compile:config-mcp && node scripts/pack-smoke.mjs",
-    "prepare": "npm run compile:mcp && npm run compile:config-mcp"
+    "prepare": "node scripts/prepare-package.mjs"
   },
   "engines": {
     "node": ">=20"

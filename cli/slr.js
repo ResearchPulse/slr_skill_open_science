@@ -86,20 +86,48 @@ function promptProjectToken() {
   });
 }
 
-function connectorRuntimeArgs(runtimePackageRoot, mode, profileName = undefined) {
-  const args = [resolve(runtimePackageRoot, 'bin', 'install.js'), mode];
+function findPythonRuntime() {
+  const probe = 'import sys;print(sys.version_info[0],sys.version_info[1]);print(sys.executable)';
+  const candidates = process.platform === 'win32'
+    ? [['py', '-3'], ['python'], ['python3']]
+    : [['python3'], ['python']];
+  for (const [command, ...prefix] of candidates) {
+    const result = spawnSync(command, [...prefix, '-c', probe], {
+      encoding: 'utf8',
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 3_000,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0 || !result.stdout) continue;
+    const [versionLine, executable] = result.stdout.trim().split(/\r?\n/);
+    const [major, minor] = String(versionLine || '').split(' ').map(Number);
+    if (major === 3 && minor >= 8 && executable) return { executable: executable.trim(), version: `${major}.${minor}` };
+  }
+  return null;
+}
+
+function connectorRuntimeArgs(runtimePackageRoot, scriptName, profileName = undefined) {
+  const python = findPythonRuntime();
+  const args = [resolve(runtimePackageRoot, 'scripts', scriptName)];
   if (profileName) args.push('--profile', profileName);
-  return args;
+  return {
+    command: python?.executable || (process.platform === 'win32' ? 'python' : 'python3'),
+    args,
+    pythonDetected: Boolean(python),
+  };
 }
 
 function connectorConfig(profile, runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   if (!profile) throw new Error('no active profile; create or select one first');
+  const runtime = connectorRuntimeArgs(runtimePackageRoot, 'slr_mcp.py', profile.name);
   return {
     name: profile.connectorName || `slr-${profile.name}`,
     displayName: `SLR (${profile.projectName || profile.name})`,
     transport: 'stdio',
-    command: process.execPath,
-    args: connectorRuntimeArgs(runtimePackageRoot, '--mcp', profile.name),
+    command: runtime.command,
+    args: runtime.args,
+    env: { SLR_PROFILE_NAME: profile.name },
     ...(profile.credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: profile.credentialId } } : {}),
   };
 }
@@ -108,17 +136,18 @@ function configConnectorConfig(
   credentialId = undefined,
   runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
 ) {
+  const runtime = connectorRuntimeArgs(runtimePackageRoot, 'slr_config_mcp.py');
   return {
     name: 'slr-config',
     displayName: 'SLR Config',
     transport: 'stdio',
-    command: process.execPath,
-    args: connectorRuntimeArgs(runtimePackageRoot, '--config-mcp'),
+    command: runtime.command,
+    args: runtime.args,
     ...(credentialId ? { envCredentialIds: { SLR_AGENT_TOKEN: credentialId } } : {}),
   };
 }
 
-function openScienceCommand(executable, args, input = undefined) {
+function openScienceCommand(executable, args, input = undefined, environment = process.env) {
   const windowsBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable);
   const command = windowsBatch ? (process['env']['ComSpec'] || 'cmd.exe') : executable;
   const commandArgs = windowsBatch
@@ -132,6 +161,7 @@ function openScienceCommand(executable, args, input = undefined) {
     encoding: 'utf8',
     shell: false,
     stdio: ['pipe', 'pipe', 'pipe'],
+    env: environment,
     timeout: args[0] === 'status'
       ? OPEN_SCIENCE_STATUS_TIMEOUT_MS
       : args[0] === 'start'
@@ -184,16 +214,19 @@ function connectorIdFromRecord(record) {
 
 function existingConnectorId(stdout, connector) {
   const records = connectorRecords(parseJsonOutput(stdout));
-  const expectedMode = connector.args.includes('--config-mcp') ? '--config-mcp' : '--mcp';
+  const expectedScript = connector.args[0] ? String(connector.args[0]).split(/[\\/]/).pop().toLowerCase() : null;
   const signatureMatches = records.filter(record => {
     const config = record?.config || record?.connector || record;
     const args = Array.isArray(config?.args) ? config.args.map(value => String(value)) : [];
     const directRuntime = config?.command === connector.command
-      && args.some(value => /[\\/]bin[\\/]install\.js$/i.test(value));
+      && (expectedScript
+        ? args.some(value => value.split(/[\\/]/).pop()?.toLowerCase() === expectedScript)
+        : args.some(value => /[\\/]bin[\\/]install\.js$/i.test(value)));
+    const legacyDirectNode = args.some(value => /[\\/]bin[\\/]install\.js$/i.test(value));
     const legacyNpx = config?.command === 'npx'
       && args.includes('github:ResearchPulse/slr_skill_open_science');
-    return (directRuntime || legacyNpx)
-      && args.includes(expectedMode)
+    const legacyMode = connector.args.includes('slr_config_mcp.py') ? '--config-mcp' : '--mcp';
+    return (directRuntime || (legacyDirectNode && args.includes(legacyMode)) || (legacyNpx && args.includes(legacyMode)))
       && (connector.args.includes('--profile')
         ? args.includes('--profile')
           && args[args.indexOf('--profile') + 1] === connector.args[connector.args.indexOf('--profile') + 1]
@@ -479,20 +512,27 @@ function detectOpenScienceCli(environment = process.env) {
 
   if (result.status === 0 && !result.error) {
     const executable = result.stdout.trim().split(/\r?\n/)[0];
-    if (executable) return { available: true, executable, source: 'path' };
+    if (executable) {
+      const probe = openScienceCommand(executable, ['status', '--json'], undefined, environment);
+      const state = !probe.error ? parseJsonOutput(probe.stdout) : null;
+      if (state && typeof state.running === 'boolean') return { available: true, executable, source: 'path' };
+    }
   }
-
-  const executable = installedOpenScienceCliCandidates(environment).find(candidate => existsSync(candidate));
-  return executable
-    ? { available: true, executable, source: 'known-path' }
-    : { available: false };
+  for (const executable of installedOpenScienceCliCandidates(environment)) {
+    if (!existsSync(executable)) continue;
+    const probe = openScienceCommand(executable, ['status', '--json'], undefined, environment);
+    const state = !probe.error ? parseJsonOutput(probe.stdout) : null;
+    if (state && typeof state.running === 'boolean') return { available: true, executable, source: 'known-path' };
+  }
+  return { available: false };
 }
 
 export function inspectPackage(packageRoot) {
   const assets = {
     skill: resolve(packageRoot, 'skill', 'slr', 'SKILL.md'),
-    mcpEntrypoint: resolve(packageRoot, 'mcp', 'slr-agent-mcp', 'out', 'index.js'),
-    configMcpEntrypoint: resolve(packageRoot, 'mcp', 'slr-config-mcp', 'out', 'index.js'),
+    pythonRuntime: resolve(packageRoot, 'scripts', 'slr.py'),
+    pythonMcpEntrypoint: resolve(packageRoot, 'scripts', 'slr_mcp.py'),
+    pythonConfigMcpEntrypoint: resolve(packageRoot, 'scripts', 'slr_config_mcp.py'),
     setupGuide: resolve(packageRoot, 'docs', 'SLR_MCP_OPEN_SCIENCE_SETUP.md'),
   };
 
@@ -748,9 +788,11 @@ export async function main(args = process.argv.slice(2), options = {}) {
     const profileStoreSnapshot = captureProfileStore(process.env);
     try {
       const options = profileOptions(args);
+      const interactive = !asJson && Boolean(process.stdin.isTTY && process.stdout.isTTY);
       const setup = await prepareProfile({
         name: options.name,
         apiBaseUrl: options.apiBaseUrl,
+        interactive,
       });
       const canPrompt = !asJson && !hasFlag(args, '--yes')
         && process.stdin.isTTY && process.stdout.isTTY;
@@ -758,6 +800,9 @@ export async function main(args = process.argv.slice(2), options = {}) {
         const token = await promptProjectToken();
         if (token) setup.token = token;
       }
+    if (!hasFlag(args, '--no-register') && !findPythonRuntime()) {
+      throw new Error('Python 3.8+ is required for the SLR MCP runtime; install Python or use --no-register for profile-only setup');
+    }
     let profile = setup.profile;
     const hasCredential = Boolean(setup.token || profile?.credentialId);
     const skill = installSkill(packageRoot, flagValue(args, '--skill-dir'));

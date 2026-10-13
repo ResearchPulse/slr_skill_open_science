@@ -68,7 +68,79 @@ export interface AgentTask {
     reasoning: string;
     data?: JsonObject;
   };
+  taskKind?: 'screening' | 'extraction' | string;
   [key: string]: unknown;
+}
+
+export interface ExtractionEvidence {
+  fieldId: string;
+  sourceAssetId: string;
+  sourceRevision: string;
+  sourceHash: string;
+  startOffset: number;
+  endOffset: number;
+  quote: string;
+  quoteHash: string;
+  section?: string;
+  paragraph?: number;
+  pdfPage?: number;
+}
+
+export interface ExtractionDraft {
+  taskId: string;
+  agentId: string;
+  reviewerId: string;
+  projectId: string;
+  paperId: string;
+  templateVersion: number;
+  values: JsonObject;
+  evidence: ExtractionEvidence[];
+  baseVersion: number;
+  version: number;
+  status: 'DRAFT' | 'SUBMITTED' | string;
+  sourceAssetId?: string;
+  sourceRevision?: string;
+  sourceHash?: string;
+  lastProposalId?: string;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
+
+export interface ExtractionContext {
+  task: AgentTask;
+  assignment: JsonObject;
+  templateSnapshot: JsonObject;
+  paper: PaperSummary;
+  draft: ExtractionDraft | null;
+}
+
+export interface ExtractionFullText {
+  status: 'COMPLETED';
+  markdown: string;
+  sourceAssetId: string;
+  sourceRevision: string;
+  sourceHash: string;
+  coordinateMap: Array<{
+    paragraph: number;
+    startOffset: number;
+    endOffset: number;
+    lineStart: number;
+    lineEnd: number;
+  }>;
+}
+
+export interface ExtractionCheck {
+  status: 'PASS' | 'WARN' | 'BLOCK' | string;
+  issues: Array<{ code: string; severity: 'WARN' | 'BLOCK'; message: string }>;
+  draftVersion: number;
+  model?: { status: string };
+  checkedAt: string;
+}
+
+export interface ExtractionConfirmation {
+  confirm: boolean;
+  digest: string;
 }
 
 export interface TaskPage {

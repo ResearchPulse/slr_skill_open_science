@@ -9,9 +9,10 @@ SLR review menu
 1. Check connection and assigned tasks (/slr status)
 2. List assigned papers (/slr tasks)
 3. Review a paper (/slr review next)
-4. Configure or switch a project profile (/slr config)
-5. Run quick setup/check (/slr setup)
-6. Show help (/slr help)
+4. Extract a paper (/slr extract <taskId>)
+5. Configure or switch a project profile (/slr config)
+6. Run quick setup/check (/slr setup)
+7. Show help (/slr help)
 ```
 
 Use the numbered choices as the normal command menu when the host does not provide command buttons.
@@ -25,6 +26,7 @@ The Open-Science skill keeps the Claude command vocabulary:
 |---|---|
 | `/slr list` | Alias for `/slr tasks` |
 | `/slr review [N|ids]` | Create drafts for eligible assigned tasks; never submit implicitly |
+| `/slr extract <taskId>` | Extract one assigned `taskKind: extraction` task with evidence coordinates and one confirmation |
 | `/slr drafts` | Show local drafts only |
 | `/slr edit <taskId> <instruction>` | Revise a local draft and show the exact new payload |
 | `/slr submit [ids]` | Confirm a selected draft batch once, then use the digest-bound MCP write |
@@ -58,6 +60,8 @@ Use these state-specific variants:
 Do not suggest `/slr review` for FULL_TEXT tasks with unavailable or pending Markdown. Never suggest
 `/slr submit` or `/slr auto` unless the user explicitly asks for that workflow.
 Both still require the same confirmation-gated MCP write.
+
+For extraction tasks, suggest `/slr extract <taskId>` instead of `/slr review`. The extraction flow requires explicit `taskKind: "extraction"`, uses the template snapshot/version, normalized Markdown source asset/revision/hash, bounded offsets, isolated draft storage, deterministic checks, and one confirmation before `submit_extraction_draft`. The result is a pending proposal for human promotion. Leader consensus uses `finalize_extraction_consensus`, which records a proposal rather than finalizing consensus.
 
 ## Review confirmation response
 

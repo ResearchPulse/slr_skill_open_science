@@ -10,6 +10,7 @@ export function defaultSkillRoot() {
 
 export function installSkill(packageRoot, targetRoot = defaultSkillRoot()) {
   const sourceRoot = resolve(packageRoot, 'skill', 'slr');
+  const sourceScripts = resolve(packageRoot, 'scripts');
   const target = resolve(targetRoot);
   if (!existsSync(resolve(sourceRoot, 'SKILL.md'))) {
     throw new Error('package skill asset is missing');
@@ -21,6 +22,7 @@ export function installSkill(packageRoot, targetRoot = defaultSkillRoot()) {
   }
   mkdirSync(resolve(target, '..'), { recursive: true, mode: 0o700 });
   cpSync(sourceRoot, target, { recursive: true, force: true });
+  if (existsSync(sourceScripts)) cpSync(sourceScripts, resolve(target, 'scripts'), { recursive: true, force: true });
   writeFileSync(marker, 'Managed by slr_skill_open_science.\n', { encoding: 'utf8', mode: 0o600 });
   return { status: existed ? 'updated' : 'installed', path: target };
 }

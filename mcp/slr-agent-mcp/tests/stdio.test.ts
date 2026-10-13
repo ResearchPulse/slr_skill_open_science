@@ -7,7 +7,7 @@ const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const serverEntry = fileURLToPath(new URL('../out/index.js', import.meta.url));
 
 describe('SLR MCP stdio entrypoint', () => {
-  it('negotiates over stdio and exposes five tools', async () => {
+  it('negotiates over stdio and exposes screening and extraction tools', async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [serverEntry],
@@ -29,6 +29,12 @@ describe('SLR MCP stdio entrypoint', () => {
       'get_assigned_task',
       'get_task_fulltext',
       'submit_review_result',
+      'get_extraction_context',
+      'get_extraction_fulltext',
+      'save_extraction_draft',
+      'check_extraction_draft',
+      'submit_extraction_draft',
+      'finalize_extraction_consensus',
     ]);
 
     await client.close();

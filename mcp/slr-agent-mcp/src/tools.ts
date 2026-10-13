@@ -6,11 +6,15 @@ import { buildConfirmationPayload, confirmationDigest } from './confirmation.js'
 import {
   listAssignedTasksSchema,
   fullTextRequestSchema,
+  consensusProposalSchema,
+  saveExtractionDraftSchema,
   submitReviewResultSchema,
+  submitExtractionSchema,
   taskIdSchema,
 } from './schemas.js';
 import * as z from 'zod/v4';
 import type { SubmitReviewInput } from './types.js';
+import type { ConsensusProposalInput, SaveExtractionDraftInput } from './schemas.js';
 
 function jsonResult(value: unknown, secret: string): ToolTextResult {
   return { content: [{ type: 'text', text: redactSecret(JSON.stringify(value), secret) }] };
@@ -57,6 +61,8 @@ function confirmationRequiredResult(taskId: string, input: SubmitReviewInput, co
 }
 
 export function registerAgentTools(server: McpServer, client: AgentApiClient, config: McpConfig): void {
+  const extractionChallenges = new Map<string, { challengeId: string; payloadDigest: string; payload?: Record<string, unknown> }>();
+  const consensusChallenges = new Map<string, { challengeId: string; payloadDigest: string; payload?: Record<string, unknown> }>();
   server.registerTool(
     'list_assigned_tasks',
     {
@@ -169,6 +175,138 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
       } catch (error) {
         return toolError(error, config.agentToken);
       }
+    },
+  );
+
+  server.registerTool(
+    'get_extraction_context',
+    {
+      title: 'Get Extraction Context',
+      description: 'Read one assigned extraction task, its immutable template snapshot, paper metadata, and the isolated agent draft.',
+      inputSchema: taskIdSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ taskId }): Promise<ToolTextResult> => {
+      try { return jsonResult(await client.getExtractionContext(taskId), config.agentToken); }
+      catch (error) { return toolError(error, config.agentToken); }
+    },
+  );
+
+  server.registerTool(
+    'get_extraction_fulltext',
+    {
+      title: 'Get Extraction Full Text',
+      description: 'Read normalized Markdown plus source hash, revision, and evidence coordinate metadata for an extraction task.',
+      inputSchema: taskIdSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ taskId }): Promise<ToolTextResult> => {
+      try {
+        const result = await client.getExtractionFullText(taskId);
+        return jsonResult(result, config.agentToken);
+      } catch (error) { return toolError(error, config.agentToken); }
+    },
+  );
+
+  server.registerTool(
+    'save_extraction_draft',
+    {
+      title: 'Save Extraction Draft',
+      description: 'Save field values and bounded evidence coordinates to the isolated agent draft. This does not submit or modify the canonical reviewer record.',
+      inputSchema: saveExtractionDraftSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (input): Promise<ToolTextResult> => {
+      try { return jsonResult(await client.saveExtractionDraft(input as SaveExtractionDraftInput), config.agentToken); }
+      catch (error) { return toolError(error, config.agentToken); }
+    },
+  );
+
+  server.registerTool(
+    'check_extraction_draft',
+    {
+      title: 'Check Extraction Draft',
+      description: 'Run deterministic value and evidence validation on the current isolated extraction draft. No canonical write occurs.',
+      inputSchema: taskIdSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ taskId }): Promise<ToolTextResult> => {
+      try { return jsonResult(await client.checkExtractionDraft(taskId), config.agentToken); }
+      catch (error) { return toolError(error, config.agentToken); }
+    },
+  );
+
+  server.registerTool(
+    'submit_extraction_draft',
+    {
+      title: 'Submit Extraction',
+      description: 'Submit the exact extraction draft after one explicit user confirmation. The backend challenge and idempotency handshake is handled inside this tool.',
+      inputSchema: submitExtractionSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ taskId, confirmation }): Promise<ToolTextResult> => {
+      try {
+        if (!confirmation) {
+          const challenge = await client.createExtractionSubmitChallenge(taskId);
+          extractionChallenges.set(`${taskId}:${challenge.payloadDigest}`, challenge);
+          return jsonResult({
+            status: 'CONFIRMATION_REQUIRED', taskId, payloadDigest: challenge.payloadDigest, expiresAt: challenge.expiresAt,
+            draft: challenge.payload, message: 'Review this exact field-value and evidence draft. Reply confirm or cancel once.',
+          }, config.agentToken);
+        }
+        if (!confirmation.confirm) {
+          extractionChallenges.delete(`${taskId}:${confirmation.digest}`);
+          return jsonResult({ status: 'CANCELLED', message: 'Extraction submission cancelled; no proposal was written.' }, config.agentToken);
+        }
+        const challenge = extractionChallenges.get(`${taskId}:${confirmation.digest}`);
+        if (!challenge) return toolError(new AgentApiError('Extraction confirmation is missing or expired; prepare a new confirmation.', 409, 'CONFIRMATION_NOT_FOUND'), config.agentToken);
+        const result = await client.submitExtraction(taskId, challenge.challengeId, confirmation.digest);
+        extractionChallenges.delete(`${taskId}:${confirmation.digest}`);
+        return jsonResult(result, config.agentToken);
+      } catch (error) { return toolError(error, config.agentToken); }
+    },
+  );
+
+  server.registerTool(
+    'finalize_extraction_consensus',
+    {
+      title: 'Propose Extraction Consensus',
+      description: 'Create or update the leader consensus proposal after one explicit confirmation. Final consensus completion remains a separate human-gated operation.',
+      inputSchema: consensusProposalSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async (input): Promise<ToolTextResult> => {
+      const proposal = input as ConsensusProposalInput;
+      try {
+        if (!proposal.confirmation) {
+          const challenge = await client.createConsensusChallenge(proposal);
+          consensusChallenges.set(`${proposal.taskId}:${challenge.payloadDigest}`, challenge);
+          return jsonResult({ status: 'CONFIRMATION_REQUIRED', taskId: proposal.taskId, payloadDigest: challenge.payloadDigest, expiresAt: challenge.expiresAt, proposal: challenge.payload, message: 'Review the exact consensus proposal. Reply confirm or cancel once.' }, config.agentToken);
+        }
+        if (!proposal.confirmation.confirm) {
+          consensusChallenges.delete(`${proposal.taskId}:${proposal.confirmation.digest}`);
+          return jsonResult({ status: 'CANCELLED', message: 'Consensus proposal cancelled; no proposal was written.' }, config.agentToken);
+        }
+        const challenge = consensusChallenges.get(`${proposal.taskId}:${proposal.confirmation.digest}`);
+        if (!challenge) return toolError(new AgentApiError('Consensus confirmation is missing or expired; prepare a new confirmation.', 409, 'CONFIRMATION_NOT_FOUND'), config.agentToken);
+        const expectedPayload = challenge.payload && {
+          taskId: proposal.taskId,
+          expectedVersion: proposal.expectedVersion,
+          templateId: challenge.payload.templateId,
+          templateVersion: challenge.payload.templateVersion,
+          sourceAssetId: challenge.payload.sourceAssetId,
+          sourceRevision: challenge.payload.sourceRevision,
+          sourceHash: challenge.payload.sourceHash,
+          values: proposal.values,
+          findings: proposal.findings,
+        };
+        if (challenge.payload && JSON.stringify(challenge.payload) !== JSON.stringify(expectedPayload)) {
+          return toolError(new AgentApiError('Consensus confirmation does not match the displayed proposal', 409, 'CONFIRMATION_MISMATCH'), config.agentToken);
+        }
+        const result = await client.submitConsensusProposal(proposal.taskId, challenge.challengeId, proposal.confirmation.digest);
+        consensusChallenges.delete(`${proposal.taskId}:${proposal.confirmation.digest}`);
+        return jsonResult(result, config.agentToken);
+      } catch (error) { return toolError(error, config.agentToken); }
     },
   );
 }

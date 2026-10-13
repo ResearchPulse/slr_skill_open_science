@@ -83,10 +83,10 @@ Open-Science skill setup bridge
     +--> Open-Science CLI: update/add + enable
     |
     v
-local root MCP launcher --profile <name>
+managed Python MCP launcher --profile <name>
     |
     v
-exactly four SLR MCP tools
+screening and Phase-2 extraction SLR MCP tools
 ```
 
 The existing root CLI remains the canonical implementation for profile writes,
@@ -95,11 +95,11 @@ in-chat command must call that local setup layer through the host-supported
 local command/configuration bridge. It must not send the token through any of
 the four SLR MCP tools.
 
-The connector remains profile-aware and secret-free:
+The released connector remains profile-aware and secret-free:
 
 ```text
-command: npx
-args: --yes github:ResearchPulse/slr_skill_open_science --mcp --profile <name>
+command: <Python 3.8+ executable>
+args: <managed runtime>/scripts/slr_mcp.py --profile <name>
 ```
 
 Changing the active profile requires connector update/restart before the new
@@ -151,8 +151,8 @@ Detailed diagnostics remain available through the root CLI `--json` or
 ## Constraints and safety invariants
 
 - Do not modify the backend, API routes, database schema, or web application.
-- Keep exactly these four review MCP tools: `list_assigned_tasks`,
-  `get_assigned_task`, `get_task_fulltext`, and `submit_review_result`.
+- Keep the bounded screening and Phase-2 extraction MCP tools; the separate
+  config MCP owns token mutation and connector lifecycle operations.
 - Do not add arbitrary health or command-execution tools; token configuration is
   limited to `slr_config_token` in the separate config MCP.
 - Do not pass a raw token in command-line arguments or generated connector
@@ -163,8 +163,8 @@ Detailed diagnostics remain available through the root CLI `--json` or
   passes the read-only API check and the user accepts a detected match.
 - Do not automatically switch a long-running connector without updating or
   restarting it.
-- If the Open-Science CLI/daemon is unavailable, preserve the existing manual
-  import fallback and state that automatic registration was not completed.
+- If the Open-Science CLI/daemon is unavailable, fail closed and report that
+  automatic registration must be repaired before setup can succeed.
 - `/slr setup` remains a read-only connection check; `/slr config` is the only
   configuration wizard.
 
@@ -182,7 +182,7 @@ Detailed diagnostics remain available through the root CLI `--json` or
   attempts to enable it.
 - Connector restart/reconnect is required after profile switching.
 - Normal output is concise and ends with `/slr status` as the next action.
-- The connector still discovers exactly four MCP tools.
+- The connector still discovers the bounded screening and extraction tool set.
 - No backend files are changed.
 - Invalid tokens leave the previous active profile and connector unchanged.
 
