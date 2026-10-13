@@ -31,7 +31,7 @@ test('new non-interactive profiles use the production API default', async () => 
   const root = mkdtempSync(join(tmpdir(), 'slr-default-url-test-'));
   try {
     const setup = await prepareProfile({ name: 'default-url', interactive: false, environment: { SLR_CONFIG_DIR: root } });
-    assert.equal(setup.profile.apiBaseUrl, 'https://slr-api.hyperdatalab.org/api');
+    assert.equal(setup.profile.apiBaseUrl, 'https://slr-agent.hyperdatalab.org/api');
     assert.equal(setup.token, null);
   } finally {
     rmSync(root, { recursive: true, force: true });

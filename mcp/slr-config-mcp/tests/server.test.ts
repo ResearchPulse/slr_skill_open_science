@@ -29,6 +29,7 @@ describe('SLR config MCP server', () => {
     const result = await client.listTools();
     expect(result.tools.map(tool => tool.name)).toEqual([
       'slr_config_profiles',
+      'slr_config_url',
       'slr_config_validate',
       'slr_config_token',
       'slr_config_commit',
