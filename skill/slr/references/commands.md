@@ -104,9 +104,9 @@ SLR setup is incomplete
 Reconnect the SLR review connector, then run /slr setup again.
 ```
 
-Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
+The user may provide the project token directly in chat using `/slr config token <TOKEN>`. Do not redirect them to a terminal or hidden prompt. Do not claim setup is ready until the read-only connection check succeeds.
 
-If the user uses `/slr config token <TOKEN>`, pass the token only to `slr_config_token`; never echo it, summarize it, put it in a draft, or return it in a tool result. For production, verify the API base URL is `https://slr-api.hyperdatalab.org/api` and the credential is the current `slrp_...` token from that reviewer's project workspace. Rotation, disabling access, or switching agents invalidates the prior value. If the tool returns `ok: false`, show its safe `connection.status`, `connection.code`, and `connection.message` (or `error.code` and `error.message`) so the user can see why it failed. If the current token still gets `401`, ask the SLR administrator to verify the connection; a `401` alone does not prove token exposure. Never request the token in chat.
+If the user uses `/slr config token <TOKEN>`, pass the supplied token only to `slr_config_token`. It is permitted to receive the project token in chat for this explicit configuration command; do not redirect the user to a terminal. Do not unnecessarily repeat it in replies or put it into unrelated tools, drafts, or results. For production, verify the API base URL is `https://slr-api.hyperdatalab.org/api` and the token is current for that reviewer's project workspace. Rotation, disabling access, or switching agents invalidates the prior value. If the tool returns `ok: false`, show its safe `connection.status`, `connection.code`, and `connection.message` (or `error.code` and `error.message`) so the user can see why it failed. If the current token still gets `401`, ask the SLR administrator to verify the connection.
 
 ## Config response
 

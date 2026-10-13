@@ -10,7 +10,7 @@ Tài liệu này hướng dẫn kết nối một project SLR với Open-Science
 4. Dùng project token được cấp cho agent/project này. Đây là token duy nhất API dùng để nhận diện đúng agent và project, đồng thời xác định task được phép truy cập. Open-Science Credential `SLR_AGENT_TOKEN` chỉ là nơi lưu và cấp cùng token đó cho MCP.
 5. Chọn paper và bấm **Assign to ChatGPT**.
 
-Token này chỉ có scope trên agent/project đó. Không dán token vào chat, skill, source code, issue, screenshot hoặc log. Nếu token đã bị lộ, dùng **Rotate** trong SLR rồi cập nhật connector local.
+Token này gắn với agent/project. Có thể cấu hình trực tiếp trong chat bằng `/slr config token <TOKEN>`. Không ghi token vào skill, source code, issue, screenshot hoặc log.
 
 ## 2. Cài root package và cấu hình project
 
@@ -216,8 +216,8 @@ Package hiện expose năm tool review tương thích Claude, trong đó `connec
 
 ## In-chat profile configuration
 
-The in-chat flow uses the separate `slr-config` connector. Plain `/slr config` calls `slr_config_profiles`, asks the user to choose/create a profile, then uses the credential-bound `slr_config_validate` and `slr_config_commit` flow. The quick path `/slr config token <TOKEN>` calls `slr_config_token`, validates before mutation, binds the encrypted `SLR_AGENT_TOKEN` credential, and updates/enables both connectors automatically. The token is never echoed or returned. When validation returns `ok: false`, show the safe HTTP status, error code, and API message from its `connection` object. When connector registration fails, show its registration code and reason. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
+The in-chat flow uses the separate `slr-config` connector. Plain `/slr config` calls `slr_config_profiles`, asks the user to choose/create a profile, then uses the credential-bound `slr_config_validate` and `slr_config_commit` flow. The quick path `/slr config token <TOKEN>` accepts the token in chat, calls `slr_config_token`, validates before mutation, binds the Open-Science `SLR_AGENT_TOKEN` credential, and updates/enables both connectors automatically. The token is not unnecessarily repeated in the response. When validation returns `ok: false`, show the safe HTTP status, error code, and API message from its `connection` object. When connector registration fails, show its registration code and reason. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
 
-Use `/slr config` when the local project profile needs to change, or use `/slr config token <TOKEN>` for the quick token path. An exact token match switches, a matching project ID updates, and otherwise the token is saved to the selected profile. The raw token is never displayed, returned by MCP, or written to connector JSON.
+Use `/slr config` when the local project profile needs to change, or paste the token with `/slr config token <TOKEN>` for the quick path. An exact token match switches, a matching project ID updates, and otherwise the token is saved to the selected profile. The token is passed to the config tool for validation and is not written to profile metadata or connector JSON.
 
 After the single save/switch/update confirmation, the config connector updates the secret-free connector configuration and enables both local connectors. Reconnect the connectors and run `/slr status`. If either connector cannot be enabled, the commit rolls back and `/slr config` reports failure; it never falls back to a terminal package command or claims success without the connector commit.
