@@ -1,939 +1,685 @@
 #!/usr/bin/env python3
-"""Python stdlib runtime for the Open-Science SLR MCP servers.
+"""Client for the AI Agent Task API (paper screening) — Open-Science edition.
 
-The Node package is only the npx installer.  This module owns the API client,
-bounded response handling, safe profile metadata, and shared configuration
-helpers used by both Python MCP stdio servers.
+Stdlib only; usable as a CLI or imported (the `slr` MCP connector imports it):
+
+    import sys; sys.path.insert(0, "<skill>/scripts")
+    from slr import Client
+    c = Client()                      # reads config/token (never prints the token)
+    project, tasks = c.list_tasks()
+
+Configuration — one profile per reviewer workspace/project (the token is scoped to one agent,
+reviewer, and project):
+  config set-url https://<host>/api [--profile P]   save server URL
+  config set-token [--profile P] [--stdin]          save token (hidden prompt, chmod 600)
+  config use P                                      switch active profile
+  config show                                       list profiles, token masked
+  config test                                       call the API with the active profile
+  config remove P                                   delete profile + token
+  Global flag: --profile P (use P for one command without switching).
+
+  Stored in ~/.config/slr-open-science/ (override dir with $REVIEW_CONFIG_DIR):
+  config.json (URLs, current profile) and tokens/<profile> (0600). Kept apart from the
+  Claude Science skill's ~/.config/slr because each catalog agent has its own token.
+  Env overrides, first match wins: $API_BASE_URL; $AGENT_TOKEN, $AGENT_TOKEN_FILE;
+  $REVIEW_PROFILE.  Workdir: $REVIEW_WORKDIR -> ./paper-review
+
+CLI commands:
+  check                                  verify config + network + token, count tasks
+  list      [--limit N] [--all] [--status ASSIGNED|COMPLETED|any]
+  get       TASK_ID
+  markdown  TASK_ID [--out FILE] [--max-wait S]   (default out: <workdir>/fulltext/<id>.md)
+  draft     TASK_ID --decision D (--reasoning T | --reasoning-file F) [--data J | --data-file F]
+  drafts                                 summary table of pending drafts
+  submit-drafts [--ids ID ...]           POST pending drafts, log results
+  submit    TASK_ID ...same args as draft...  [--dry-run]   (direct, no draft)
+
+Exit codes: 0 ok, 1 error, 3 full text still extracting, 4 full text unavailable,
+5 task already completed (409).
 """
-
-from __future__ import annotations
-
-import hashlib
+import argparse
+import datetime as _dt
 import json
-import math
 import os
-import re
-import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
 
-
-DEFAULT_API_BASE_URL = "https://slr-agent.hyperdatalab.org/api"
-DEFAULT_TIMEOUT_MS = 30_000
-DEFAULT_JSON_RESPONSE_BYTES = 24 * 1024 * 1024
-DEFAULT_MARKDOWN_RESPONSE_BYTES = 8 * 1024 * 1024
-MAX_RESULT_BODY_BYTES = 30 * 1024
-MAX_REASONING = 16_000
+MAX_BODY_BYTES = 30 * 1024
+MAX_REASONING = 16000
 MAX_DECISION = 100
-RETRYABLE_STATUSES = {500, 502}
-APPROVED_API_HOSTS = {"slr-agent.hyperdatalab.org", "slr-api.hyperdatalab.org", "localhost", "127.0.0.1", "::1"}
-PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-OPERATION_ID_RE = re.compile(r"^[a-f0-9-]{16,80}$", re.I)
+RETRYABLE = {500, 502, 503, 504}
+USER_AGENT = "slr-agent-open-science/1.0 (systematic-review screening CLI)"
+CONF_DIR = Path.home() / ".config" / "slr-open-science"
+DEFAULT_API_URL = "https://slr-agent.hyperdatalab.org/api"
+
+EXIT_OK, EXIT_ERROR, EXIT_PENDING, EXIT_UNAVAILABLE, EXIT_CONFLICT = 0, 1, 3, 4, 5
 
 
 class ApiError(Exception):
-    """Safe error returned by the API/config boundary."""
+    def __init__(self, status, code, message, exit_code=EXIT_ERROR):
+        super().__init__(f"{status} {code}: {message}")
+        self.status, self.code, self.message, self.exit_code = status, code, message, exit_code
 
-    def __init__(self, message: str, status: int | None = None, code: str = "ERROR", retry_after: int | None = None):
-        super().__init__(message)
-        self.message = message
-        self.status = status
-        self.code = code
-        self.retry_after = retry_after
+    def as_dict(self):
+        return {"ok": False, "status": self.status, "code": self.code, "message": self.message}
 
-    def as_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {"code": self.code, "message": self.message}
-        if self.status is not None:
-            result["status"] = self.status
-        if self.retry_after is not None:
-            result["retryAfterSeconds"] = self.retry_after
-        return result
 
+# ------------------------------------------------------------------ config
 
-def redact_secret(value: Any, secret: str | None) -> Any:
-    if not secret or not isinstance(value, str):
-        return value
-    return value.replace(secret, "[REDACTED]")
+def _conf_dir():
+    return Path(os.environ.get("REVIEW_CONFIG_DIR") or CONF_DIR).expanduser()
 
 
-def safe_display(value: Any, secret: str | None = None, limit: int = 500) -> str:
-    text = str(redact_secret(value if value is not None else "", secret))
-    text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()[:limit]
+def _read_conf():
+    cfg = _conf_dir() / "config.json"
+    conf = json.loads(cfg.read_text()) if cfg.exists() else {}
+    # migrate the older flat layout {"api_base_url": ...}
+    if "api_base_url" in conf and "profiles" not in conf:
+        conf = {"current": "default", "profiles": {"default": {"api_base_url": conf["api_base_url"]}}}
+    conf.setdefault("profiles", {})
+    conf.setdefault("current", "default")
+    return conf
 
 
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+def _write_conf(conf):
+    d = _conf_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(d, 0o700)
+    (d / "config.json").write_text(json.dumps(conf, indent=2), encoding="utf-8")
 
 
-def canonical_json(value: Any) -> str:
-    """Match the target JS canonicalizer for confirmation digests."""
-    if value is None or isinstance(value, (bool, int, str)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ApiError("confirmation payload contains a non-finite number", code="VALIDATION")
-        if value == 0:
-            return "0"
-        if value.is_integer() and abs(value) < 1e21:
-            return str(int(value))
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    if isinstance(value, list):
-        return "[" + ",".join(canonical_json(item) for item in value) + "]"
-    if isinstance(value, dict):
-        return "{" + ",".join(
-            json.dumps(str(key), ensure_ascii=False, separators=(",", ":"))
-            + ":"
-            + canonical_json(value[key])
-            for key in sorted(value)
-        ) + "}"
-    return json.dumps(str(value), ensure_ascii=False, separators=(",", ":"))
+def active_profile(name=None):
+    return name or os.environ.get("REVIEW_PROFILE") or _read_conf()["current"]
 
 
-def sha256_hex(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _token_path(profile):
+    p = _conf_dir() / "tokens" / profile
+    legacy = _conf_dir() / "token"
+    if profile == "default" and not p.exists() and legacy.exists():
+        return legacy
+    return p
 
 
-def token_fingerprint(token: str) -> str:
-    return sha256_hex(str(token or ""))
+def _load_base_url(profile=None):
+    base = os.environ.get("API_BASE_URL", "").strip()
+    if not base:
+        prof = active_profile(profile)
+        base = _read_conf()["profiles"].get(prof, {}).get("api_base_url", "")
+    if not base:
+        raise ApiError(None, "CONFIG",
+                       "No API base URL. Run: slr.py config set-url https://<host>/api")
+    return base.rstrip("/")
 
 
-def mask_token(token: str | None) -> str:
-    value = str(token or "")
-    return f"set (…{value[-4:]}, {len(value)} chars)" if len(value) >= 12 else "set"
+def _load_token(profile=None):
+    tok = os.environ.get("AGENT_TOKEN", "").strip()
+    if tok:
+        return tok
+    fp = os.environ.get("AGENT_TOKEN_FILE")
+    p = Path(fp).expanduser() if fp else _token_path(active_profile(profile))
+    if p.exists():
+        tok = p.read_text().strip()
+        if tok:
+            return tok
+    raise ApiError(None, "CONFIG",
+                   "No agent token. Use /slr config token TOKEN, or run: slr.py config set-token")
 
 
-def normalize_profile_name(value: str | None) -> str:
-    name = str(value or "").strip().lower()
-    if not PROFILE_NAME_RE.fullmatch(name):
-        raise ApiError("profile name must use 1-64 lowercase letters, numbers, hyphens, or underscores", code="VALIDATION")
-    return name
+def _mask(tok):
+    return f"set (…{tok[-4:]}, {len(tok)} chars)" if len(tok) >= 12 else "set"
 
 
-def normalize_api_base_url(raw: str | None, allowed_hosts: Iterable[str] | None = None) -> str:
-    text = str(raw or "").strip()
-    try:
-        parsed = urllib.parse.urlparse(text)
-    except ValueError as exc:
-        raise ApiError("api base URL must be a valid http(s) URL", code="VALIDATION") from exc
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ApiError("api base URL must be a valid http(s) URL", code="VALIDATION")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ApiError("api base URL must not contain credentials, query parameters, or fragments", code="VALIDATION")
-    host = (parsed.hostname or "").lower()
-    allowed = {h.lower() for h in (allowed_hosts or APPROVED_API_HOSTS)}
-    if host not in allowed:
-        raise ApiError(f"api base URL host is not allowed: {parsed.hostname}", code="VALIDATION")
-    if parsed.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
-        raise ApiError("api base URL must use HTTPS unless it targets local loopback development", code="VALIDATION")
-    return text.rstrip("/")
+def workdir():
+    d = Path(os.environ.get("REVIEW_WORKDIR", "paper-review")).resolve()
+    for sub in ("fulltext", "drafts", "submitted"):
+        (d / sub).mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def migrate_legacy_production_api_url(raw: str | None) -> str | None:
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = urllib.parse.urlsplit(text)
-        if (parsed.hostname or "").lower() != "slr-api.hyperdatalab.org":
-            return text
-        port = f":{parsed.port}" if parsed.port else ""
-        return urllib.parse.urlunsplit(parsed._replace(netloc=f"slr-agent.hyperdatalab.org{port}")).rstrip("/")
-    except ValueError:
-        return text
+# ------------------------------------------------------------------ validation
 
-
-def _parse_int_env(name: str, raw: str | None, default: int, minimum: int, maximum: int) -> int:
-    if not str(raw or "").strip():
-        return default
-    try:
-        value = int(str(raw).strip())
-    except ValueError as exc:
-        raise ApiError(f"{name} must be an integer from {minimum} to {maximum}", code="CONFIG") from exc
-    if value < minimum or value > maximum:
-        raise ApiError(f"{name} must be an integer from {minimum} to {maximum}", code="CONFIG")
-    return value
-
-
-def config_root(environment: dict[str, str] | None = None) -> Path:
-    env = environment or os.environ
-    return Path(env.get("SLR_CONFIG_DIR", "~/.slr")).expanduser().resolve()
-
-
-def _store_path(root: Path) -> Path:
-    return root / "profiles.json"
-
-
-def _empty_store() -> dict[str, Any]:
-    return {"version": 1, "activeProfile": None, "profiles": {}}
-
-
-def _assert_no_secrets(value: Any, parent_key: str = "") -> None:
-    if not isinstance(value, dict):
-        if isinstance(value, list):
-            for item in value:
-                _assert_no_secrets(item, parent_key)
-        return
-    allowed = {"tokenSource", "hasCredentialBinding", "hasLocalToken", "credentialFingerprint"}
-    profile_fields = {
-        "name", "apiBaseUrl", "projectId", "projectName", "credentialId", "connectorId",
-        "connectorName", "tokenSource", "hasLocalToken", "credentialFingerprint", "workspaceId",
-        "workspaceRoot", "createdAt", "updatedAt",
-    }
-    for key, child in value.items():
-        if parent_key == "profile-record" and key not in profile_fields:
-            raise ApiError("profile store contains an unsupported profile field", code="CONFIG")
-        if key == "credentialFingerprint" and child not in (None, "") and not re.fullmatch(r"[0-9a-f]{64}", str(child), re.I):
-            raise ApiError("profile store contains an invalid credential fingerprint", code="CONFIG")
-        if parent_key != "profiles" and key not in allowed and re.search(r"token|secret|password|authorization|api.?key", key, re.I):
-            raise ApiError("profile store contains a forbidden secret field", code="CONFIG")
-        _assert_no_secrets(child, "profile-record" if parent_key == "profiles" else key)
-
-
-def _remove_legacy_token_files(root: Path, store: dict[str, Any]) -> None:
-    token_root = root / "tokens"
-    profiles = store.get("profiles")
-    if not isinstance(profiles, dict):
-        return
-    for name in profiles:
-        if not isinstance(name, str) or not PROFILE_NAME_RE.fullmatch(name):
-            continue
-        legacy_path = token_root / name
-        if not legacy_path.exists() and not legacy_path.is_symlink():
-            continue
-        try:
-            legacy_path.unlink()
-        except OSError as exc:
-            raise ApiError("unable to remove a legacy plaintext token file", code="CONFIG") from exc
-
-
-def read_store(environment: dict[str, str] | None = None) -> dict[str, Any]:
-    path = _store_path(config_root(environment))
-    if not path.exists():
-        return _empty_store()
-    try:
-        store = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ApiError("profile store is invalid JSON; repair or remove it before continuing", code="CONFIG") from exc
-    if not isinstance(store, dict) or store.get("version") != 1 or not isinstance(store.get("profiles"), dict):
-        raise ApiError("unsupported profile store version; expected 1", code="CONFIG")
-    _assert_no_secrets(store)
-    _remove_legacy_token_files(config_root(environment), store)
-    return store
-
-
-def _write_store(store: dict[str, Any], environment: dict[str, str] | None = None) -> None:
-    root = config_root(environment)
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(root, 0o700)
-    except OSError:
-        pass
-    fd, temporary = tempfile.mkstemp(prefix="profiles.", suffix=".tmp", dir=str(root))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(store, ensure_ascii=False, indent=2) + "\n")
-        try:
-            os.chmod(temporary, 0o600)
-        except OSError:
-            pass
-        destination = _store_path(root)
-        for attempt in range(8):
-            try:
-                os.replace(temporary, destination)
-                break
-            except OSError:
-                if attempt == 7:
-                    raise
-                time.sleep(0.025 * (attempt + 1))
-    finally:
-        try:
-            Path(temporary).unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def _workspace_root(root: Path, name: str, workspace_id: str) -> str:
-    return str(root / "profiles" / name / workspace_id / "paper-review")
-
-
-def _public_profile(profile: dict[str, Any], active: bool = False) -> dict[str, Any]:
-    return {
-        "name": profile.get("name"),
-        "apiBaseUrl": profile.get("apiBaseUrl"),
-        "projectId": profile.get("projectId") or None,
-        "projectName": profile.get("projectName") or None,
-        "credentialId": profile.get("credentialId") or None,
-        "connectorId": profile.get("connectorId") or None,
-        "connectorName": profile.get("connectorName") or None,
-        "tokenSource": profile.get("tokenSource", "unconfigured"),
-        "hasLocalToken": False,
-        "hasCredentialBinding": bool(profile.get("credentialId")),
-        "workspaceRoot": profile.get("workspaceRoot"),
-        "active": active,
-        "createdAt": profile.get("createdAt"),
-        "updatedAt": profile.get("updatedAt"),
-    }
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def list_profiles(environment: dict[str, str] | None = None) -> list[dict[str, Any]]:
-    store = read_store(environment)
-    return [_public_profile(profile, store.get("activeProfile") == name) for name, profile in store["profiles"].items()]
-
-
-def get_profile(name: str, environment: dict[str, str] | None = None) -> dict[str, Any]:
-    normalized = normalize_profile_name(name)
-    store = read_store(environment)
-    profile = store["profiles"].get(normalized)
-    if not profile:
-        raise ApiError(f"profile not found: {normalized}", code="CONFIG")
-    return _public_profile(profile, store.get("activeProfile") == normalized)
-
-
-def active_profile(environment: dict[str, str] | None = None) -> dict[str, Any] | None:
-    store = read_store(environment)
-    name = store.get("activeProfile")
-    return get_profile(name, environment) if name else None
-
-
-def profile_from_environment(environment: dict[str, str] | None = None) -> dict[str, Any] | None:
-    env = environment or os.environ
-    name = env.get("SLR_PROFILE_NAME") or env.get("REVIEW_PROFILE")
-    if name:
-        return get_profile(name, env)
-    return active_profile(env)
-
-
-def create_or_update_profile(name: str, api_base_url: str, environment: dict[str, str] | None = None) -> dict[str, Any]:
-    env = environment or os.environ
-    normalized = normalize_profile_name(name)
-    normalized_url = normalize_api_base_url(api_base_url)
-    store = read_store(env)
-    timestamp = _now()
-    current = store["profiles"].get(normalized)
-    if current:
-        current["apiBaseUrl"] = normalized_url
-        current["updatedAt"] = timestamp
-        _write_store(store, env)
-        return _public_profile(current, store.get("activeProfile") == normalized)
-    root = config_root(env)
-    workspace_id = str(uuid.uuid4())
-    profile = {
-        "name": normalized,
-        "apiBaseUrl": normalized_url,
-        "projectId": None,
-        "projectName": None,
-        "credentialId": None,
-        "connectorId": None,
-        "connectorName": f"slr-{normalized}",
-        "tokenSource": "unconfigured",
-        "hasLocalToken": False,
-        "credentialFingerprint": None,
-        "workspaceId": workspace_id,
-        "workspaceRoot": _workspace_root(root, normalized, workspace_id),
-        "createdAt": timestamp,
-        "updatedAt": timestamp,
-    }
-    store["profiles"][normalized] = profile
-    if not store.get("activeProfile"):
-        store["activeProfile"] = normalized
-    _write_store(store, env)
-    return _public_profile(profile, store.get("activeProfile") == normalized)
-
-
-def commit_profile_configuration(name: str, changes: dict[str, Any], environment: dict[str, str] | None = None) -> dict[str, Any]:
-    env = environment or os.environ
-    normalized = normalize_profile_name(name)
-    store = read_store(env)
-    original = json.loads(json.dumps(store))
-    timestamp = _now()
-    root = config_root(env)
-    profile = store["profiles"].get(normalized)
-    if not profile:
-        workspace_id = str(uuid.uuid4())
-        profile = {
-            "name": normalized,
-            "apiBaseUrl": normalize_api_base_url(changes.get("apiBaseUrl")),
-            "projectId": None,
-            "projectName": None,
-            "credentialId": None,
-            "connectorId": None,
-            "connectorName": f"slr-{normalized}",
-            "tokenSource": "unconfigured",
-            "hasLocalToken": False,
-            "credentialFingerprint": None,
-            "workspaceId": workspace_id,
-            "workspaceRoot": _workspace_root(root, normalized, workspace_id),
-            "createdAt": timestamp,
-            "updatedAt": timestamp,
-        }
-    try:
-        if "apiBaseUrl" in changes:
-            profile["apiBaseUrl"] = normalize_api_base_url(changes["apiBaseUrl"])
-        for key in ("projectId", "projectName", "credentialId", "connectorId", "connectorName"):
-            if key in changes:
-                profile[key] = str(changes.get(key) or "").strip() or None
-        if "credentialId" in changes:
-            profile["tokenSource"] = "open-science-credential" if profile.get("credentialId") else "unconfigured"
-        if "credentialFingerprint" in changes:
-            fingerprint = str(changes.get("credentialFingerprint") or "").strip() or None
-            if fingerprint and not re.fullmatch(r"[0-9a-f]{64}", fingerprint, re.I):
-                raise ApiError("credential fingerprint must be a SHA-256 hex digest", code="CONFIG")
-            profile["credentialFingerprint"] = fingerprint.lower() if fingerprint else None
-        profile["hasLocalToken"] = False
-        profile["updatedAt"] = timestamp
-        store["profiles"][normalized] = profile
-        _write_store(store, env)
-    except Exception:
-        try:
-            _write_store(original, env)
-        except Exception:
-            pass
-        raise
-    return _public_profile(profile, store.get("activeProfile") == normalized)
-
-
-def activate_profile(name: str, environment: dict[str, str] | None = None) -> dict[str, Any]:
-    env = environment or os.environ
-    normalized = normalize_profile_name(name)
-    store = read_store(env)
-    if normalized not in store["profiles"]:
-        raise ApiError(f"profile not found: {normalized}", code="CONFIG")
-    store["activeProfile"] = normalized
-    _write_store(store, env)
-    return _public_profile(store["profiles"][normalized], True)
-
-
-def capture_profile_store(environment: dict[str, str] | None = None) -> dict[str, Any]:
-    return json.loads(json.dumps(read_store(environment)))
-
-
-def restore_profile_store(snapshot: dict[str, Any], environment: dict[str, str] | None = None) -> dict[str, Any] | None:
-    if not isinstance(snapshot, dict) or snapshot.get("version") != 1 or not isinstance(snapshot.get("profiles"), dict):
-        raise ApiError("invalid profile store snapshot", code="CONFIG")
-    _assert_no_secrets(snapshot)
-    _write_store(json.loads(json.dumps(snapshot)), environment)
-    return active_profile(environment)
-
-
-def find_profiles_by_token(token: str, environment: dict[str, str] | None = None, api_base_url: str | None = None) -> list[dict[str, Any]]:
-    fingerprint = token_fingerprint(token)
-    normalized_url = normalize_api_base_url(api_base_url) if api_base_url else None
-    store = read_store(environment)
-    return [
-        _public_profile(profile, store.get("activeProfile") == name)
-        for name, profile in store["profiles"].items()
-        if profile.get("credentialFingerprint") == fingerprint
-        and (not normalized_url or profile.get("apiBaseUrl") == normalized_url)
-    ]
-
-
-def find_profiles_by_project_id(project_id: str, environment: dict[str, str] | None = None, api_base_url: str | None = None) -> list[dict[str, Any]]:
-    normalized_url = normalize_api_base_url(api_base_url) if api_base_url else None
-    return [
-        profile for profile in list_profiles(environment)
-        if profile.get("projectId") == str(project_id or "").strip()
-        and (not normalized_url or profile.get("apiBaseUrl") == normalized_url)
-    ]
-
-
-@dataclass(frozen=True)
-class McpConfig:
-    api_base_url: str
-    agent_token: str
-    timeout_ms: int = DEFAULT_TIMEOUT_MS
-    profile_id: str = "active-profile"
-    project_id: str = "unknown-project"
-    project_name: str = "SLR project"
-    max_json_response_bytes: int = DEFAULT_JSON_RESPONSE_BYTES
-    max_markdown_response_bytes: int = DEFAULT_MARKDOWN_RESPONSE_BYTES
-
-
-def load_mcp_config(environment: dict[str, str] | None = None) -> McpConfig:
-    env = environment or os.environ
-    profile = profile_from_environment(env)
-    raw_url = str(env.get("SLR_API_BASE_URL") or (profile or {}).get("apiBaseUrl") or "").strip()
-    if not raw_url:
-        raise ApiError("SLR_API_BASE_URL is required", code="CONFIG")
-    token = str(env.get("SLR_AGENT_TOKEN") or "").strip()
-    if not token:
-        raise ApiError("SLR_AGENT_TOKEN is required", code="CONFIG")
-    requested_hosts = [value.strip().lower() for value in str(env.get("SLR_API_ALLOWED_HOSTS") or "").split(",") if value.strip()]
-    unsupported = [host for host in requested_hosts if host not in APPROVED_API_HOSTS]
-    if unsupported:
-        raise ApiError(f"SLR_API_ALLOWED_HOSTS contains an unapproved host: {unsupported[0]}", code="CONFIG")
-    url = normalize_api_base_url(raw_url, requested_hosts or APPROVED_API_HOSTS)
-    return McpConfig(
-        api_base_url=url,
-        agent_token=token,
-        timeout_ms=_parse_int_env("SLR_REQUEST_TIMEOUT_MS", env.get("SLR_REQUEST_TIMEOUT_MS"), DEFAULT_TIMEOUT_MS, 1_000, 120_000),
-        profile_id=str(env.get("SLR_PROFILE_ID") or (profile or {}).get("name") or "active-profile"),
-        project_id=str(env.get("SLR_PROJECT_ID") or (profile or {}).get("projectId") or "unknown-project"),
-        project_name=str(env.get("SLR_PROJECT_NAME") or (profile or {}).get("projectName") or "SLR project"),
-        max_json_response_bytes=_parse_int_env("SLR_MAX_JSON_RESPONSE_BYTES", env.get("SLR_MAX_JSON_RESPONSE_BYTES"), DEFAULT_JSON_RESPONSE_BYTES, 16 * 1024, 32 * 1024 * 1024),
-        max_markdown_response_bytes=_parse_int_env("SLR_MAX_MARKDOWN_RESPONSE_BYTES", env.get("SLR_MAX_MARKDOWN_RESPONSE_BYTES"), DEFAULT_MARKDOWN_RESPONSE_BYTES, 16 * 1024, 32 * 1024 * 1024),
-    )
-
-
-class AgentApiClient:
-    """Bounded stdlib client for the current agent API contract."""
-
-    def __init__(self, config: McpConfig, base_url: str | None = None, token: str | None = None):
-        self.config = config
-        self.base_url = normalize_api_base_url(base_url or config.api_base_url).rstrip("/") + "/agent/v1"
-        self.token = token or config.agent_token
-        self.timeout = max(1, config.timeout_ms / 1000)
-        host = (urllib.parse.urlparse(self.base_url).hostname or "").lower()
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if host in {"localhost", "127.0.0.1", "::1"} else urllib.request.build_opener()
-
-    def _read_bounded(self, response: Any, max_bytes: int) -> str:
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                too_large = int(content_length) > max_bytes
-            except (TypeError, ValueError):
-                too_large = False
-            if too_large:
-                raise ApiError("SLR API response exceeded the configured size limit", 502, "RESPONSE_TOO_LARGE")
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            chunk = response.read(min(64 * 1024, max_bytes - total + 1))
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > max_bytes:
-                raise ApiError("SLR API response exceeded the configured size limit", 502, "RESPONSE_TOO_LARGE")
-            chunks.append(chunk)
-        return b"".join(chunks).decode("utf-8", "replace")
-
-    def _request(self, path: str, method: str = "GET", body: Any = None, accept: str = "application/json", accepted: set[int] | None = None) -> tuple[int, dict[str, str], str]:
-        url = self.base_url + path
-        payload = _json_bytes(body) if body is not None else None
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": accept, "User-Agent": "slr-agent-python/1.0"}
-        if payload is not None:
-            headers["Content-Type"] = "application/json"
-        for attempt in range(2):
-            request = urllib.request.Request(url, data=payload, method=method, headers=headers)
-            try:
-                with self.opener.open(request, timeout=self.timeout) as response:
-                    status = int(response.status)
-                    raw = self._read_bounded(response, self.config.max_markdown_response_bytes if "text/markdown" in accept else self.config.max_json_response_bytes)
-                    if status not in (accepted or set()) and not 200 <= status < 300:
-                        raise self._api_error(status, response.headers, raw)
-                    if method == "GET" and status in RETRYABLE_STATUSES and attempt == 0:
-                        time.sleep(0.1)
-                        continue
-                    return status, {key.lower(): value for key, value in response.headers.items()}, raw
-            except urllib.error.HTTPError as exc:
-                raw = self._read_bounded(exc, self.config.max_json_response_bytes)
-                if exc.code in RETRYABLE_STATUSES and attempt == 0 and method == "GET":
-                    time.sleep(0.1)
-                    continue
-                raise self._api_error(exc.code, exc.headers, raw)
-            except urllib.error.URLError as exc:
-                if method == "GET" and attempt == 0:
-                    time.sleep(0.1)
-                    continue
-                raise ApiError("Unable to connect to the SLR API", 502, "API_UNREACHABLE") from exc
-            except TimeoutError as exc:
-                raise ApiError("SLR API request timed out", 504, "REQUEST_TIMEOUT") from exc
-        raise ApiError("SLR API request failed", 502, "API_UNREACHABLE")
-
-    def _api_error(self, status: int, headers: Any, raw: str) -> ApiError:
-        try:
-            parsed = json.loads(raw or "{}")
-        except json.JSONDecodeError:
-            parsed = {}
-        error = parsed.get("error") if isinstance(parsed, dict) else {}
-        message = redact_secret(error.get("message") if isinstance(error, dict) else None, self.token) or f"SLR API request failed with HTTP {status}"
-        code = error.get("code") if isinstance(error, dict) else None
-        if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9_:-]{1,64}", code) or self.token in code:
-            code = f"HTTP_{status}"
-        retry_after = None
-        try:
-            retry_after = int(float(headers.get("Retry-After", "")))
-        except (TypeError, ValueError):
-            pass
-        return ApiError(str(message), status, code, retry_after)
-
-    def _json(self, path: str, method: str = "GET", body: Any = None, accepted: set[int] | None = None) -> Any:
-        _, _, raw = self._request(path, method, body, "application/json", accepted)
-        try:
-            parsed = json.loads(raw or "null")
-        except json.JSONDecodeError as exc:
-            raise ApiError("SLR API returned invalid JSON", 502, "INVALID_JSON") from exc
-        if not isinstance(parsed, dict) or parsed.get("success") is not True or "data" not in parsed:
-            raise ApiError("Backend returned an invalid success envelope", 502, "INVALID_RESPONSE")
-        return parsed["data"]
-
-    def list_assigned_tasks(self, limit: int = 50, cursor: str | None = None) -> dict[str, Any]:
-        limit = max(1, min(100, int(limit)))
-        query = urllib.parse.urlencode({"limit": limit, **({"cursor": cursor} if cursor else {})})
-        return self._json(f"/tasks?{query}")
-
-    def get_assigned_task(self, task_id: str) -> dict[str, Any]:
-        return self._json(f"/tasks/{urllib.parse.quote(str(task_id), safe='')}")
-
-    def get_task_fulltext(self, task_id: str) -> dict[str, Any]:
-        status, headers, raw = self._request(f"/tasks/{urllib.parse.quote(str(task_id), safe='')}/markdown", accept="text/markdown, application/json", accepted={202})
-        if status == 202:
-            try:
-                data = json.loads(raw or "{}").get("data", {})
-            except json.JSONDecodeError:
-                data = {}
-            return {"kind": "pending", "status": data.get("status", "PROCESSING"), "retryAfterSeconds": _retry_after(headers)}
-        return {"kind": "ready", "markdown": raw}
-
-    def submit_review_result(self, task_id: str, input_data: dict[str, Any]) -> Any:
-        if len(_json_bytes(input_data)) > MAX_RESULT_BODY_BYTES:
-            raise ApiError("Review result body must not exceed 30 KB", 400, "REQUEST_TOO_LARGE")
-        return self._json(f"/tasks/{urllib.parse.quote(str(task_id), safe='')}/result", "POST", input_data)
-
-    def get_extraction_context(self, task_id: str) -> Any:
-        return self._json(f"/extraction/tasks/{urllib.parse.quote(str(task_id), safe='')}/context")
-
-    def get_extraction_fulltext(self, task_id: str) -> Any:
-        status, headers, raw = self._request(f"/extraction/tasks/{urllib.parse.quote(str(task_id), safe='')}/fulltext", accept="application/json", accepted={202})
-        try:
-            parsed = json.loads(raw or "null")
-        except json.JSONDecodeError as exc:
-            raise ApiError("Backend returned invalid extraction full-text JSON", 502, "INVALID_RESPONSE") from exc
-        if status == 202:
-            data = parsed.get("data", {}) if isinstance(parsed, dict) else {}
-            return {"kind": "pending", "status": data.get("status", "PROCESSING"), "retryAfterSeconds": _retry_after(headers)}
-        if not isinstance(parsed, dict) or parsed.get("success") is not True or not isinstance(parsed.get("data"), dict):
-            raise ApiError("Backend returned an invalid extraction full-text response", 502, "INVALID_RESPONSE")
-        return parsed["data"]
-
-    def save_extraction_draft(self, input_data: dict[str, Any]) -> Any:
-        task_id = urllib.parse.quote(str(input_data["taskId"]), safe="")
-        body = {key: input_data[key] for key in ("templateVersion", "values", "evidence", "expectedVersion") if key in input_data}
-        return self._json(f"/extraction/tasks/{task_id}/draft", "PUT", body)
-
-    def check_extraction_draft(self, task_id: str) -> Any:
-        return self._json(f"/extraction/tasks/{urllib.parse.quote(str(task_id), safe='')}/check", "POST")
-
-    def create_extraction_submit_challenge(self, task_id: str) -> Any:
-        return self._json(f"/extraction/tasks/{urllib.parse.quote(str(task_id), safe='')}/submit-challenge", "POST")
-
-    def submit_extraction(self, task_id: str, challenge_id: str, payload_digest: str) -> Any:
-        body = {"challengeId": challenge_id, "payloadDigest": payload_digest, "idempotencyKey": f"mcp-extraction-{task_id}-{payload_digest}"}
-        return self._json(f"/extraction/tasks/{urllib.parse.quote(str(task_id), safe='')}/submit", "POST", body)
-
-    def create_consensus_challenge(self, input_data: dict[str, Any]) -> Any:
-        task_id = urllib.parse.quote(str(input_data["taskId"]), safe="")
-        body = {key: input_data[key] for key in ("expectedVersion", "values", "findings") if key in input_data}
-        return self._json(f"/extraction/tasks/{task_id}/consensus-challenge", "POST", body)
-
-    def submit_consensus_proposal(self, task_id: str, challenge_id: str, payload_digest: str) -> Any:
-        body = {"challengeId": challenge_id, "payloadDigest": payload_digest, "idempotencyKey": f"mcp-consensus-{task_id}-{payload_digest}"}
-        return self._json(f"/extraction/tasks/{urllib.parse.quote(str(task_id), safe='')}/consensus-proposal", "POST", body)
-
-
-def _retry_after(headers: dict[str, str]) -> int:
-    try:
-        return max(0, int(float(headers.get("retry-after", "10"))))
-    except (TypeError, ValueError):
-        return 10
-
-
-def build_review_body(decision: Any, reasoning: Any, data: Any = None) -> dict[str, Any]:
-    if not isinstance(decision, str) or not isinstance(reasoning, str):
-        raise ApiError("decision and reasoning must be strings", code="VALIDATION")
-    normalized_decision = decision.strip()
-    normalized_reasoning = reasoning.strip()
-    if not normalized_decision or len(normalized_decision) > MAX_DECISION:
-        raise ApiError("decision must be 1-100 characters", code="VALIDATION")
-    if not normalized_reasoning or len(normalized_reasoning) > MAX_REASONING:
-        raise ApiError("reasoning is required and must be at most 16,000 characters", code="VALIDATION")
-    body: dict[str, Any] = {"decision": normalized_decision, "reasoning": normalized_reasoning}
+def build_body(decision, reasoning, data=None):
+    decision = (decision or "").strip()
+    if not decision or len(decision) > MAX_DECISION:
+        raise ApiError(None, "VALIDATION", "decision must be 1-100 characters.")
+    reasoning = (reasoning or "").strip()
+    if not reasoning:
+        raise ApiError(None, "VALIDATION", "reasoning is required.")
+    if len(reasoning) > MAX_REASONING:
+        raise ApiError(None, "VALIDATION", f"reasoning is {len(reasoning)} chars; max {MAX_REASONING}.")
+    body = {"decision": decision, "reasoning": reasoning}
     if data is not None:
         if not isinstance(data, dict):
-            raise ApiError("data must be a JSON object", code="VALIDATION")
+            raise ApiError(None, "VALIDATION", "data must be a JSON object.")
         body["data"] = data
-    if len(_json_bytes(body)) > MAX_RESULT_BODY_BYTES:
-        raise ApiError("Review result body must not exceed 30 KB", 400, "REQUEST_TOO_LARGE")
+    size = len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+    if size > MAX_BODY_BYTES:
+        raise ApiError(None, "VALIDATION", f"body is {size} bytes; max {MAX_BODY_BYTES}.")
     return body
 
 
-def build_confirmation_payload(config: McpConfig, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "profileId": config.profile_id,
-        "projectId": config.project_id,
-        "taskId": task_id,
-        "decision": body["decision"],
-        "reasoning": body["reasoning"],
-    }
-    if "data" in body:
-        payload["data"] = body["data"]
-    return payload
+# ------------------------------------------------------------------ client
 
-
-def confirmation_digest(config: McpConfig, task_id: str, body: dict[str, Any]) -> str:
-    return sha256_hex(canonical_json(build_confirmation_payload(config, task_id, body)))
-
-
-def _resolve_windows_cli_shim(executable: str, args: list[str], environment: dict[str, str] | None = None) -> tuple[list[str], dict[str, str]] | None:
-    """Resolve an Open-Science managed .cmd shim to direct Electron execution."""
-    if os.name != "nt" or not executable.lower().endswith((".cmd", ".bat")):
-        return None
-    try:
-        shim = Path(executable)
-        text = shim.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    app_match = re.search(r'^set\s+"OPEN_SCIENCE_APP_PATH=([^"\r\n]+)"', text, re.I | re.M)
-    launch_match = re.search(r'^"([^"]+open-science\.exe)"\s+"([^"]+cli[\\/]index\.mjs)"\s+%\*', text, re.I | re.M)
-    app_path = Path(app_match.group(1).strip()) if app_match else None
-    launch_path = Path(launch_match.group(2).strip()) if launch_match else None
-    if not app_path or not launch_path or not app_path.is_file() or not launch_path.is_file():
-        return None
-    child_environment = dict(environment or os.environ)
-    child_environment["ELECTRON_RUN_AS_NODE"] = "1"
-    return [str(app_path), str(launch_path), *args], child_environment
-
-
-def run_json_command(executable: str, args: list[str], input_value: str | None = None, timeout: float = 15.0, environment: dict[str, str] | None = None) -> tuple[int | None, str, str, Exception | None]:
-    try:
-        command = _resolve_windows_cli_shim(executable, args, environment)
-        child_environment = None
-        if command:
-            command, child_environment = command
+class Client:
+    def __init__(self, base_url=None, token=None, retries=3, profile=None):
+        self.base = (base_url or _load_base_url(profile)).rstrip("/")
+        self._token = token or _load_token(profile)
+        self.retries = retries
+        host = (urllib.parse.urlparse(self.base).hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "::1") or os.environ.get("SLR_NO_PROXY"):
+            self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         else:
-            command = [executable, *args]
-            child_environment = environment
-        completed = subprocess.run(command, input=input_value, capture_output=True, text=True, timeout=timeout, shell=False, encoding="utf-8", errors="replace", env=child_environment, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return completed.returncode, completed.stdout, completed.stderr, None
-    except Exception as exc:
-        return None, "", "", exc
+            self._opener = urllib.request.build_opener()
+
+    def __repr__(self):  # keep the token out of kernel output
+        return f"Client(base={self.base!r}, token=***)"
+
+    def _request(self, method, path, body=None, accept="application/json"):
+        if path.startswith("/api/") and self.base.endswith("/api"):
+            path = path[len("/api"):]  # markdownPath is absolute (/api/...)
+        url = self.base + path
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+        headers = {"Authorization": f"Bearer {self._token}", "Accept": accept,
+                   "User-Agent": USER_AGENT}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        attempt = 0
+        while True:
+            req = urllib.request.Request(url, data=data, method=method, headers=headers)
+            try:
+                with self._opener.open(req, timeout=60) as r:
+                    return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
+            except urllib.error.HTTPError as e:
+                raw = e.read()
+                if e.code in RETRYABLE and attempt < self.retries:
+                    attempt += 1
+                    time.sleep(2 ** attempt)
+                    continue
+                return e.code, {k.lower(): v for k, v in e.headers.items()}, raw
+            except urllib.error.URLError as e:
+                if attempt < self.retries:
+                    attempt += 1
+                    time.sleep(2 ** attempt)
+                    continue
+                raise ApiError(None, "NETWORK",
+                               f"{e.reason}. Cannot reach {self.base}: check the backend is running and "
+                               "the URL is right; from chat use the `slr` MCP connector; see `slr.py diag`.")
+
+    @staticmethod
+    def _raise(status, raw, exit_code=EXIT_ERROR):
+        try:
+            err = json.loads(raw.decode("utf-8")).get("error") or {}
+        except Exception:
+            err = {}
+        raise ApiError(status, err.get("code", f"HTTP_{status}"),
+                       err.get("message", raw.decode("utf-8", "replace")[:500]), exit_code)
+
+    def _get_json(self, path):
+        status, _, raw = self._request("GET", path)
+        if status != 200:
+            self._raise(status, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        if not payload.get("success"):
+            raise ApiError(status, "BAD_RESPONSE", "Unexpected response envelope.")
+        return payload["data"]
+
+    # --- endpoints
+    def list_page(self, limit=50, cursor=None):
+        q = {"limit": max(1, min(100, limit))}
+        if cursor:
+            q["cursor"] = cursor
+        return self._get_json("/agent/v1/tasks?" + urllib.parse.urlencode(q))
+
+    def list_tasks(self, status="ASSIGNED", limit=100):
+        items, project, cursor = [], None, None
+        while True:
+            page = self.list_page(limit, cursor)
+            project = project or page.get("project")
+            items.extend(page.get("items", []))
+            cursor = page.get("nextCursor")
+            if not page.get("hasMore") or not cursor:
+                break
+        if status != "any":
+            items = [t for t in items if t.get("status") == status]
+        return project, items
+
+    def get_task(self, task_id):
+        return self._get_json(f"/agent/v1/tasks/{urllib.parse.quote(task_id)}")
+
+    def markdown(self, task_id, max_wait=60):
+        result = self.get_task(task_id)
+        task = result.get("task") or result
+        if task.get("stage") != "FULL_TEXT":
+            raise ApiError(409, "FULLTEXT_STAGE_REQUIRED",
+                           "Markdown is available only for FULL_TEXT tasks.", EXIT_UNAVAILABLE)
+        path = task.get("markdownPath")
+        if not path:
+            raise ApiError(409, "FULLTEXT_UNAVAILABLE",
+                           "This FULL_TEXT task has no markdownPath.", EXIT_UNAVAILABLE)
+        if not isinstance(path, str) or not path.startswith(("/agent/v1/", "/api/agent/v1/")):
+            raise ApiError(None, "BAD_RESPONSE", "Task returned an invalid markdownPath.")
+        api_path = path[len("/api"):] if path.startswith("/api/") else path
+        expected_path = f"/agent/v1/tasks/{urllib.parse.quote(task_id)}/markdown"
+        if api_path != expected_path:
+            raise ApiError(None, "BAD_RESPONSE", "Task returned a markdownPath for a different endpoint.")
+        deadline = time.time() + max_wait
+        while True:
+            status, headers, raw = self._request("GET", path, accept="text/markdown")
+            if status == 200:
+                return raw.decode("utf-8", "replace")
+            if status == 202:
+                try:
+                    wait = max(10, int(headers.get("retry-after", "10")))
+                except ValueError:
+                    wait = 10
+                if time.time() + wait > deadline:
+                    raise ApiError(202, "PENDING", "Full text still extracting; retry later.", EXIT_PENDING)
+                time.sleep(wait)
+                continue
+            self._raise(status, raw, EXIT_UNAVAILABLE if status == 409 else EXIT_ERROR)
+
+    def submit(self, task_id, body):
+        path = f"/agent/v1/tasks/{urllib.parse.quote(task_id)}/result"
+        status, _, raw = self._request("POST", path, body=body)
+        if status == 200:
+            return json.loads(raw.decode("utf-8")).get("data")
+        self._raise(status, raw, EXIT_CONFLICT if status == 409 else EXIT_ERROR)
 
 
-def parse_json_output(text: str) -> Any:
+# ------------------------------------------------------------------ audit log
+
+def log_event(event):
+    event = {"at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), **event}
+    with open(workdir() / "audit.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+# ------------------------------------------------------------------ CLI helpers
+
+def _out(obj):
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _read_args_body(args):
+    reasoning = args.reasoning
+    if args.reasoning_file:
+        reasoning = Path(args.reasoning_file).read_text(encoding="utf-8")
+    raw = args.data
+    if args.data_file:
+        raw = Path(args.data_file).read_text(encoding="utf-8")
+    data = None
+    if raw:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ApiError(None, "VALIDATION", f"data is not valid JSON: {e}")
+    return build_body(args.decision, reasoning, data)
+
+
+def _proxy_view():
+    def redact(u):
+        p = urllib.parse.urlparse(u)
+        return u.replace(p.password, "***") if p.password else u
+    return {k: redact(v) for k, v in urllib.request.getproxies().items()
+            if k in ("http", "https", "all", "no")}
+
+
+def cmd_diag(args):
+    import socket
+    import ssl
+    out = {"python": sys.version.split()[0], "platform": sys.platform,
+           "proxies_seen_by_urllib": _proxy_view(),
+           "ca_env": {k: os.environ.get(k) for k in
+                      ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS")
+                      if os.environ.get(k)},
+           "default_ca_paths": ssl.get_default_verify_paths()._asdict()}
     try:
-        return json.loads(text.strip())
-    except (TypeError, json.JSONDecodeError):
-        return None
+        base = _load_base_url()
+        host = urllib.parse.urlparse(base).hostname
+        out["api_base_url"] = base
+        try:
+            out["direct_dns"] = socket.gethostbyname(host)
+        except OSError as e:
+            out["direct_dns"] = f"failed ({e}) - DNS blocked or wrong host; from chat use the `slr` MCP connector"
+    except ApiError as e:
+        out["api_base_url"] = e.message
+    try:
+        r = _try_connect(None)
+        out["api_call"] = r
+    except ApiError as e:
+        out["api_call"] = e.as_dict()
+    if not (out["api_call"] or {}).get("connected"):
+        out["hint"] = ("If this shell has no network (agent sandbox), use the `slr` MCP connector's "
+                       "connection_test instead - it runs on the host.")
+    _out(out)
 
 
-def detect_open_science_cli(environment: dict[str, str] | None = None) -> dict[str, Any]:
-    env = environment or os.environ
-    candidates: list[str] = []
-    if env.get("OPEN_SCIENCE_CLI"):
-        candidates.append(env["OPEN_SCIENCE_CLI"])
-    if os.name == "nt":
-        code, stdout, _, _ = run_json_command("where.exe", ["open-science"], timeout=2)
-        if code == 0 and stdout.strip():
-            candidates.extend(line.strip() for line in stdout.splitlines() if line.strip())
-        appdata = env.get("APPDATA")
-        local = env.get("LOCALAPPDATA")
-        for root in (appdata, local):
-            if root:
-                candidates.extend([str(Path(root) / "Open-Science" / "open-science.cmd"), str(Path(root) / "Open-Science" / "bin" / "open-science.cmd")])
-        if appdata:
-            candidates.append(str(Path(appdata) / "npm" / "open-science.cmd"))
+def cmd_check(args):
+    c = Client()
+    project, tasks = c.list_tasks(status="any")
+    assigned = sum(1 for t in tasks if t.get("status") == "ASSIGNED")
+    _out({"ok": True, "api": c.base, "project": (project or {}).get("name"),
+          "assigned": assigned, "completed": len(tasks) - assigned, "workdir": str(workdir())})
+
+
+def cmd_list(args):
+    c = Client()
+    if args.all:
+        project, items = c.list_tasks(status=args.status, limit=args.limit)
+        nxt = None
     else:
-        import shutil
-        found = shutil.which("open-science")
-        if found:
-            candidates.append(found)
-    for candidate in dict.fromkeys(candidates):
-        if not candidate or not (Path(candidate).exists() or os.path.basename(candidate) == "open-science"):
+        page = c.list_page(args.limit)
+        project, items, nxt = page.get("project"), page.get("items", []), page.get("nextCursor")
+        if args.status != "any":
+            items = [t for t in items if t.get("status") == args.status]
+    _out({"ok": True, "project": project, "count": len(items), "nextCursor": nxt, "items": items})
+
+
+def cmd_get(args):
+    _out({"ok": True, **Client().get_task(args.task_id)})
+
+
+def cmd_markdown(args):
+    text = Client().markdown(args.task_id, args.max_wait)
+    out = Path(args.out) if args.out else workdir() / "fulltext" / f"{args.task_id}.md"
+    out.write_text(text, encoding="utf-8")
+    _out({"ok": True, "file": str(out), "chars": len(text)})
+
+
+def cmd_draft(args):
+    body = _read_args_body(args)
+    path = workdir() / "drafts" / f"{args.task_id}.json"
+    path.write_text(json.dumps({"taskId": args.task_id, "title": args.title, "body": body},
+                               ensure_ascii=False, indent=2), encoding="utf-8")
+    log_event({"event": "draft", "taskId": args.task_id, "decision": body["decision"]})
+    _out({"ok": True, "draft": str(path), "decision": body["decision"]})
+
+
+def _load_drafts(ids=None):
+    drafts = []
+    for p in sorted((workdir() / "drafts").glob("*.json")):
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if ids and d["taskId"] not in ids:
             continue
-        code, stdout, _, error = run_json_command(candidate, ["status", "--json"], timeout=2, environment=env)
-        state = parse_json_output(stdout) if not error else None
-        if isinstance(state, dict) and isinstance(state.get("running"), bool):
-            return {"available": True, "executable": candidate, "source": "path"}
-    return {"available": False}
+        d["_path"] = p
+        drafts.append(d)
+    return drafts
 
 
-def open_science_report(environment: dict[str, str] | None = None) -> dict[str, Any]:
-    return {"openScienceCli": detect_open_science_cli(environment)}
+def cmd_drafts(args):
+    rows = []
+    for d in _load_drafts():
+        b = d["body"]
+        rows.append({"taskId": d["taskId"], "title": (d.get("title") or "")[:80],
+                     "decision": b["decision"],
+                     "confidence": (b.get("data") or {}).get("confidence"),
+                     "keyReason": next((l.split(":", 1)[1].strip() for l in b["reasoning"].splitlines()
+                                        if l.lower().startswith("key reason")), b["reasoning"][:120])})
+    counts = {}
+    for r in rows:
+        counts[r["decision"]] = counts.get(r["decision"], 0) + 1
+    _out({"ok": True, "pending": len(rows), "byDecision": counts, "drafts": rows})
 
 
-def connector_script_path(name: str) -> Path:
-    return Path(__file__).resolve().with_name(name)
-
-
-def connector_config(profile: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "name": profile.get("connectorName") or f"slr-{profile.get('name')}",
-        "displayName": f"SLR ({profile.get('name')})",
-        "transport": "stdio",
-        "command": sys.executable,
-        "args": [str(connector_script_path("slr_mcp.py"))],
-        "env": {"SLR_PROFILE_NAME": profile.get("name")},
-        **({"envCredentialIds": {"SLR_AGENT_TOKEN": profile["credentialId"]}} if profile.get("credentialId") else {}),
-    }
-
-
-def config_connector_config(credential_id: str | None = None) -> dict[str, Any]:
-    return {
-        "name": "slr-config",
-        "displayName": "SLR Config",
-        "transport": "stdio",
-        "command": sys.executable,
-        "args": [str(connector_script_path("slr_config_mcp.py"))],
-    }
-
-
-def failure_code(stdout: str, stderr: str) -> str | None:
-    value = parse_json_output(stderr) or parse_json_output(stdout) or {}
-    return value.get("error", {}).get("code") if isinstance(value, dict) and isinstance(value.get("error"), dict) else value.get("code") if isinstance(value, dict) else None
-
-
-def ensure_open_science_daemon(executable: str) -> dict[str, Any]:
-    code, stdout, _, error = run_json_command(executable, ["status", "--json"], timeout=2)
-    state = parse_json_output(stdout) if code == 0 and not error else None
-    if isinstance(state, dict) and state.get("running") is True:
-        return {"ready": True, "started": False}
-    code, _, stderr, error = run_json_command(executable, ["start", "--no-open"], timeout=8)
-    if error or code != 0:
-        return {"ready": False, "started": False, "reason": "open-science-daemon-start-failed"}
-    for _ in range(8):
-        time.sleep(0.25)
-        code, stdout, _, _ = run_json_command(executable, ["status", "--json"], timeout=2)
-        state = parse_json_output(stdout) if code == 0 else None
-        if isinstance(state, dict) and state.get("running") is True:
-            return {"ready": True, "started": True}
-    return {"ready": False, "started": True, "reason": "open-science-daemon-not-ready"}
-
-
-def _credential_records(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    if isinstance(value, dict):
-        for key in ("credentials", "data"):
-            child = value.get(key)
-            if isinstance(child, list):
-                return [item for item in child if isinstance(item, dict)]
-            if isinstance(child, dict) and isinstance(child.get("credentials"), list):
-                return [item for item in child["credentials"] if isinstance(item, dict)]
-    return []
-
-
-def ensure_open_science_credential(token: str, report: dict[str, Any]) -> dict[str, Any]:
-    if not token:
-        return {"configured": False, "reason": "token-missing"}
-    info = report.get("openScienceCli") or {}
-    executable = info.get("executable") if info.get("available") else None
-    if not executable:
-        return {"configured": False, "reason": "open-science-cli-not-detected"}
-    daemon = ensure_open_science_daemon(executable)
-    if not daemon.get("ready"):
-        return {"configured": False, "reason": daemon.get("reason", "open-science-daemon-not-ready")}
-    code, stdout, stderr, error = run_json_command(executable, ["credential", "list", "--json"])
-    if error or code != 0:
-        return {"configured": False, "reason": f"open-science-credential-list-failed:{failure_code(stdout, stderr) or 'unknown'}"}
-    records = _credential_records(parse_json_output(stdout))
-    existing = next((item for item in records if item.get("kind") == "token" and item.get("displayName") == "SLR_AGENT_TOKEN"), None)
-    args = ["credential", "update", str(existing.get("id")), "--json"] if existing else ["credential", "add", "--json"]
-    payload = {"displayName": "SLR_AGENT_TOKEN", **({"kind": "token"} if not existing else {}), "secret": token}
-    code, stdout, stderr, error = run_json_command(executable, args, json.dumps(payload) + "\n")
-    if error or code != 0:
-        return {"configured": False, "reason": f"open-science-credential-write-failed:{failure_code(stdout, stderr) or 'unknown'}"}
-    written = parse_json_output(stdout) or {}
-    credential_id = (written.get("createdCredential") or {}).get("id") if isinstance(written, dict) else None
-    credential_id = credential_id or (written.get("credential") or {}).get("id") if isinstance(written, dict) else None
-    credential_id = credential_id or (written.get("data") or {}).get("credential", {}).get("id") if isinstance(written, dict) else None
-    credential_id = credential_id or (written.get("id") if isinstance(written, dict) else None) or (existing or {}).get("id")
-    if not credential_id:
-        return {"configured": False, "reason": "open-science-credential-id-missing"}
-    return {"configured": True, "credentialId": credential_id, "displayName": "SLR_AGENT_TOKEN", "created": not bool(existing), "updated": bool(existing)}
-
-
-def register_connector_definition(connector: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
-    info = report.get("openScienceCli") or {}
-    executable = info.get("executable") if info.get("available") else None
-    if not executable:
-        return {"registered": False, "reason": "open-science-cli-not-detected"}
-    daemon = ensure_open_science_daemon(executable)
-    if not daemon.get("ready"):
-        return {"registered": False, "reason": daemon.get("reason", "open-science-daemon-not-ready")}
-    code, stdout, stderr, error = run_json_command(executable, ["connector", "list", "--json"])
-    if error or code != 0:
-        return {"registered": False, "reason": f"open-science-connector-list-failed:{failure_code(stdout, stderr) or 'unknown'}"}
-    listed = parse_json_output(stdout)
-    records: list[dict[str, Any]] = []
-    if isinstance(listed, dict):
-        for key in ("customServers", "connectors"):
-            child = listed.get(key)
-            if isinstance(child, list):
-                records.extend(item for item in child if isinstance(item, dict))
-        data = listed.get("data")
-        if isinstance(data, dict):
-            for key in ("customServers", "connectors"):
-                child = data.get(key)
-                if isinstance(child, list):
-                    records.extend(item for item in child if isinstance(item, dict))
-    elif isinstance(listed, list):
-        records = [item for item in listed if isinstance(item, dict)]
-    existing = next((item for item in records if isinstance(item, dict) and (item.get("name") == connector.get("name") or item.get("id") == connector.get("name"))), None)
-    expected_credentials = set((connector.get("envCredentialIds") or {}).keys())
-    if existing and existing.get("command") == connector.get("command") and existing.get("args") == connector.get("args") and existing.get("displayName") == connector.get("displayName") and existing.get("transport") == connector.get("transport"):
-        visible_credentials = existing.get("environmentNames")
-        if not isinstance(visible_credentials, list) or set(visible_credentials) == expected_credentials:
-            connector_id = existing.get("id") or connector.get("name")
-            if existing.get("enabled") is True:
-                return {"registered": True, "enabled": True, "connector": connector_id, "updated": False}
-            code, _, stderr, error = run_json_command(executable, ["connector", "enable", str(connector_id)])
-            if error or code != 0:
-                return {"registered": True, "enabled": False, "connector": connector_id, "reason": "open-science-connector-enable-failed"}
-            return {"registered": True, "enabled": True, "connector": connector_id, "updated": False}
-    if existing:
-        args = ["connector", "update", str(existing.get("id"))]
-        operation = "update"
+def cmd_mark_submitted(args):
+    """Record a vote that was sent by another channel (e.g. the MCP submit tool)."""
+    src = workdir() / "drafts" / f"{args.task_id}.json"
+    if args.result in ("submitted", "already_completed") and src.exists():
+        src.rename(workdir() / "submitted" / src.name)
+        moved = True
     else:
-        args = ["connector", "add", "--json"]
-        operation = "add"
-    code, stdout, stderr, error = run_json_command(executable, args, json.dumps(connector) + "\n")
-    if error or code != 0:
-        return {"registered": False, "reason": f"open-science-connector-{operation}-failed:{failure_code(stdout, stderr) or 'unknown'}"}
-    result = parse_json_output(stdout) or {}
-    connector_id = (existing or {}).get("id") or result.get("id") or result.get("connectorId") or (result.get("connector") or {}).get("id")
-    if not connector_id:
-        refreshed_code, refreshed_stdout, _, _ = run_json_command(executable, ["connector", "list", "--json"])
-        refreshed = parse_json_output(refreshed_stdout) if refreshed_code == 0 else None
-        candidates = []
-        if isinstance(refreshed, dict):
-            for key in ("customServers", "connectors"):
-                if isinstance(refreshed.get(key), list):
-                    candidates.extend(item for item in refreshed[key] if isinstance(item, dict))
-        if isinstance(refreshed, list):
-            candidates.extend(item for item in refreshed if isinstance(item, dict))
-        match = next((item for item in candidates if item.get("name") == connector.get("name") or item.get("id") == connector.get("name")), None)
-        connector_id = (match or {}).get("id")
-    if not connector_id:
-        return {"registered": False, "reason": "open-science-connector-id-missing"}
-    code, _, stderr, error = run_json_command(executable, ["connector", "enable", str(connector_id)])
-    if error or code != 0:
-        return {"registered": True, "enabled": False, "connector": connector_id, "reason": "open-science-connector-enable-failed"}
-    return {"registered": True, "enabled": True, "connector": connector_id, "updated": operation == "update"}
+        moved = False
+    log_event({"event": "submit", "taskId": args.task_id, "result": args.result,
+               "via": args.via, **({"error": args.error} if args.error else {})})
+    _out({"ok": True, "taskId": args.task_id, "result": args.result, "draftMoved": moved})
 
 
-def register_connector(profile: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
-    if not profile.get("credentialId"):
-        return {"registered": False, "reason": "credential-binding-missing"}
-    return register_connector_definition(connector_config(profile), report)
+def cmd_submit_drafts(args):
+    c = Client()
+    results = []
+    for d in _load_drafts(set(args.ids) if args.ids else None):
+        tid = d["taskId"]
+        try:
+            c.submit(tid, d["body"])
+            res = {"taskId": tid, "result": "submitted", "decision": d["body"]["decision"]}
+        except ApiError as e:
+            if e.exit_code == EXIT_CONFLICT:
+                res = {"taskId": tid, "result": "already_completed"}
+            elif e.status == 401:
+                log_event({"event": "submit_abort", "taskId": tid, "error": e.as_dict()})
+                results.append({"taskId": tid, "result": "error", "error": e.as_dict()})
+                break  # token is dead; stop the batch
+            else:
+                res = {"taskId": tid, "result": "error", "error": e.as_dict()}
+        if res["result"] != "error":
+            d["_path"].rename(workdir() / "submitted" / d["_path"].name)
+        log_event({"event": "submit", **res})
+        results.append(res)
+    ok = all(r["result"] != "error" for r in results)
+    _out({"ok": ok, "results": results})
+    if not ok:
+        sys.exit(EXIT_ERROR)
 
 
-def register_config_connector(credential_id: str | None, report: dict[str, Any]) -> dict[str, Any]:
-    return register_connector_definition(config_connector_config(), report)
+def cmd_submit(args):
+    body = _read_args_body(args)
+    if args.dry_run:
+        _out({"ok": True, "dryRun": True, "body": body})
+        return
+    task = Client().submit(args.task_id, body)
+    log_event({"event": "submit", "taskId": args.task_id, "result": "submitted",
+               "decision": body["decision"]})
+    _out({"ok": True, "task": task})
 
 
-def operation_expiry(minutes: int = 10) -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+# ------------------------------------------------------------------ config commands
 
+def _normalize_url(url):
+    url = url.strip().rstrip("/")
+    u = urllib.parse.urlparse(url)
+    if u.scheme not in ("http", "https") or not u.netloc:
+        raise ApiError(None, "VALIDATION", "URL must look like https://<backend-host>/api")
+    if not u.path.endswith("/api"):
+        url += "/api"  # contract paths are /api/agent/v1/...
+    return url
+
+
+def _try_connect(profile):
+    try:
+        c = Client(profile=profile, retries=0)
+        project, tasks = c.list_tasks(status="any")
+        assigned = sum(1 for t in tasks if t.get("status") == "ASSIGNED")
+        return {"connected": True, "project": (project or {}).get("name"),
+                "assigned": assigned, "completed": len(tasks) - assigned}
+    except ApiError as e:
+        return {"connected": False, "error": e.as_dict()}
+
+
+# Library form (return dicts) — shared by the CLI below and the MCP connector's config_* tools.
+
+def set_url(url, profile=None):
+    conf = _read_conf()
+    prof = profile or conf["current"]
+    url = _normalize_url(url)
+    conf["profiles"].setdefault(prof, {})["api_base_url"] = url
+    if profile and not conf["profiles"].get(conf["current"]):
+        conf["current"] = prof
+    _write_conf(conf)
+    return {"ok": True, "profile": prof, "api_base_url": url}
+
+
+def set_token(tok, profile=None):
+    conf = _read_conf()
+    prof = profile or conf["current"]
+    tok = (tok or "").strip()
+    if tok.lower().startswith("bearer "):
+        tok = tok[7:].strip()
+    if not tok or any(ch.isspace() for ch in tok):
+        raise ApiError(None, "VALIDATION", "Token is empty or contains whitespace.")
+    p = _conf_dir() / "tokens" / prof
+    p.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(_conf_dir(), 0o700)
+    os.chmod(p.parent, 0o700)
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(tok)
+    os.chmod(p, 0o600)
+    conf["profiles"].setdefault(prof, {})
+    _write_conf(conf)
+    res = {"ok": True, "profile": prof, "token": _mask(tok)}
+    if conf["profiles"][prof].get("api_base_url"):
+        res.update(_try_connect(prof))
+    return res
+
+
+def use_profile(profile):
+    conf = _read_conf()
+    if profile not in conf["profiles"]:
+        raise ApiError(None, "CONFIG", f"Unknown profile '{profile}'. "
+                       f"Known: {', '.join(conf['profiles']) or 'none'}")
+    conf["current"] = profile
+    _write_conf(conf)
+    return {"ok": True, "current": profile}
+
+
+def show_config():
+    conf = _read_conf()
+    cur = active_profile()
+    rows = []
+    for name in sorted(set(conf["profiles"]) | {cur}):
+        tp = _token_path(name)
+        tok = tp.read_text().strip() if tp.exists() else ""
+        rows.append({"profile": name, "active": name == cur,
+                     "api_base_url": conf["profiles"].get(name, {}).get("api_base_url"),
+                     "token": _mask(tok) if tok else "missing"})
+    overrides = [k for k in ("API_BASE_URL", "AGENT_TOKEN", "AGENT_TOKEN_FILE", "REVIEW_PROFILE")
+                 if os.environ.get(k)]
+    return {"ok": True, "configDir": str(_conf_dir()), "profiles": rows, "envOverrides": overrides}
+
+
+def remove_profile(profile):
+    conf = _read_conf()
+    conf["profiles"].pop(profile, None)
+    for p in (_conf_dir() / "tokens" / profile, _token_path(profile)):
+        if p.exists():
+            p.unlink()
+    if conf["current"] == profile:
+        conf["current"] = next(iter(conf["profiles"]), "default")
+    _write_conf(conf)
+    return {"ok": True, "removed": profile, "current": conf["current"]}
+
+
+def cmd_config_set_url(args):
+    _out(set_url(args.url, args.profile))
+
+
+def cmd_config_set_token(args):
+    prof = args.profile or _read_conf()["current"]
+    if args.stdin or not sys.stdin.isatty():
+        tok = sys.stdin.read()
+    else:
+        import getpass
+        tok = getpass.getpass(f"Agent token for profile '{prof}' (input hidden): ")
+    _out(set_token(tok, prof))
+
+
+def cmd_config_use(args):
+    _out(use_profile(args.profile))
+
+
+def cmd_config_show(args):
+    _out(show_config())
+
+
+def cmd_config_test(args):
+    prof = active_profile(args.profile)
+    res = {"profile": prof, **_try_connect(prof)}
+    _out({"ok": res["connected"], **res})
+    if not res["connected"]:
+        sys.exit(EXIT_ERROR)
+
+
+def cmd_config_remove(args):
+    _out(remove_profile(args.profile))
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--profile", help="Use this profile for this command (overrides current)")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    cfg = sub.add_parser("config", help="Configure API server and token")
+    csub = cfg.add_subparsers(dest="config_cmd", required=True)
+    s = csub.add_parser("set-url", help="Set API base URL, e.g. https://host/api")
+    s.add_argument("url"); s.add_argument("--profile", dest="cprofile")
+    s.set_defaults(func=cmd_config_set_url)
+    s = csub.add_parser("set-token", help="Save agent token (hidden prompt or --stdin)")
+    s.add_argument("--stdin", action="store_true"); s.add_argument("--profile", dest="cprofile")
+    s.set_defaults(func=cmd_config_set_token)
+    s = csub.add_parser("use", help="Switch active profile"); s.add_argument("profile_name")
+    s.set_defaults(func=cmd_config_use)
+    csub.add_parser("show", help="Show profiles (token masked)").set_defaults(func=cmd_config_show)
+    s = csub.add_parser("test", help="Test connection with current profile")
+    s.set_defaults(func=cmd_config_test)
+    s = csub.add_parser("remove", help="Delete a profile and its token"); s.add_argument("profile_name")
+    s.set_defaults(func=cmd_config_remove)
+
+    sub.add_parser("check").set_defaults(func=cmd_check)
+    sub.add_parser("diag", help="Network/proxy/CA diagnostics (no secrets)").set_defaults(func=cmd_diag)
+
+    s = sub.add_parser("list")
+    s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--status", default="ASSIGNED")
+    s.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("get"); s.add_argument("task_id"); s.set_defaults(func=cmd_get)
+
+    s = sub.add_parser("markdown")
+    s.add_argument("task_id"); s.add_argument("--out"); s.add_argument("--max-wait", type=int, default=60)
+    s.set_defaults(func=cmd_markdown)
+
+    for name, fn in (("draft", cmd_draft), ("submit", cmd_submit)):
+        s = sub.add_parser(name)
+        s.add_argument("task_id")
+        s.add_argument("--decision", required=True)
+        s.add_argument("--reasoning"); s.add_argument("--reasoning-file")
+        s.add_argument("--data"); s.add_argument("--data-file")
+        if name == "draft":
+            s.add_argument("--title", default="")
+        else:
+            s.add_argument("--dry-run", action="store_true")
+        s.set_defaults(func=fn)
+
+    sub.add_parser("drafts").set_defaults(func=cmd_drafts)
+
+    s = sub.add_parser("mark-submitted", help="Record a vote sent via MCP; moves the draft")
+    s.add_argument("task_id")
+    s.add_argument("--result", required=True, choices=["submitted", "already_completed", "error"])
+    s.add_argument("--via", default="mcp")
+    s.add_argument("--error")
+    s.set_defaults(func=cmd_mark_submitted)
+
+    s = sub.add_parser("submit-drafts"); s.add_argument("--ids", nargs="*")
+    s.set_defaults(func=cmd_submit_drafts)
+
+    args = p.parse_args()
+    if getattr(args, "profile_name", None):
+        args.profile = args.profile_name
+    elif getattr(args, "cprofile", None):
+        args.profile = args.cprofile
+    if args.profile and args.cmd != "config":
+        os.environ["REVIEW_PROFILE"] = args.profile  # every Client() in this run uses it
+    try:
+        args.func(args)
+    except ApiError as e:
+        print(json.dumps(e.as_dict(), ensure_ascii=False))
+        sys.exit(e.exit_code)
+
+
+if __name__ == "__main__":
+    main()

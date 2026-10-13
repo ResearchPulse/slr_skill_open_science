@@ -1,45 +1,38 @@
 {
   "name": "slr-skill-open-science",
-  "version": "0.1.0",
-  "description": "Open-Science skill and local MCP connector for SLR review tasks",
-  "type": "module",
+  "version": "1.0.0",
+  "description": "One-command installer for the /slr systematic literature review skill + MCP connector in Open-Science.",
   "bin": {
-    "slr": "./bin/install.js"
+    "slr-skill-open-science": "bin/install.js"
   },
   "files": [
-    "bin",
-    "cli",
-    "scripts/slr.py",
-    "scripts/slr_mcp.py",
-    "scripts/slr_config_mcp.py",
-    "docs/SLR_MCP_OPEN_SCIENCE_SETUP.md",
-    "docs/open-science-architecture.md",
-    "skill",
-    "README.md"
-  ],
-  "workspaces": [
-    "mcp/slr-agent-mcp",
-    "mcp/slr-config-mcp"
+    "bin/",
+    "scripts/*.py",
+    "references/",
+    "SKILL.md",
+    "README.md",
+    "AI_AGENT_TASK_API_CONTRACT.md"
   ],
   "scripts": {
-    "compile:mcp": "npm run --workspace slr-agent-mcp compile",
-    "compile:config-mcp": "npm run --workspace slr-config-mcp compile",
-    "typecheck:mcp": "npm run --workspace slr-agent-mcp typecheck",
-    "typecheck:config-mcp": "npm run --workspace slr-config-mcp typecheck",
-    "test:mcp": "npm run --workspace slr-agent-mcp test",
-    "test:config-mcp": "npm run --workspace slr-config-mcp test",
-    "test:harness": "npm run --workspace slr-agent-mcp test:harness",
-    "test:cli": "node --test tests/*.test.mjs",
-    "test": "npm run test:cli && npm run test:mcp && npm run test:config-mcp",
-    "pack:check": "npm run compile:mcp && npm run compile:config-mcp && node scripts/pack-smoke.mjs",
-    "prepare": "node scripts/prepare-package.mjs"
+    "test": "python -m unittest discover -s tests -v"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=16.7"
   },
-  "dependencies": {
-    "@modelcontextprotocol/server": "^2.0.0",
-    "zod": "^4.1.0"
+  "keywords": [
+    "open-science",
+    "skill",
+    "mcp",
+    "systematic-review",
+    "slr"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ResearchPulse/slr_skill_open_science.git"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/ResearchPulse/slr_skill_open_science#readme",
+  "bugs": {
+    "url": "https://github.com/ResearchPulse/slr_skill_open_science/issues"
+  }
 }

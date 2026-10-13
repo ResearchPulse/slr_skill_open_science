@@ -1,12 +1,5 @@
-mcp/**/node_modules/
-/node_modules/
+node_modules/
 __pycache__/
-mcp/**/out/
-mcp/**/coverage/
-mcp/**/.npm-cache/
-*.tgz
+*.pyc
 paper-review/
-.slr/
-*.[e]n[v]
-*.[e]n[v].*
-/.npm-cache/
+*.tgz
