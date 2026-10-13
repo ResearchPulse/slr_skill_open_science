@@ -99,7 +99,7 @@ Follow this sequence:
 
 1. Call `connection_test`. This is the only MCP call made by `/slr setup`; it is a bounded read-only check equivalent to Claude's `config test` path.
 2. If the read-only call succeeds, report `Setup ready`, the returned project name when available, and whether assigned tasks exist. If tasks exist, suggest `/slr tasks` or `/slr review next`; otherwise suggest assigning a paper in the SLR web application first.
-3. If the connector is unavailable, report that the SLR review connector is unavailable and ask the user to reconnect it. Never ask the user to paste the token into chat or provide a terminal/manual substitute.
+3. If the `connection_test` tool is unavailable, treat this as a missing or disabled review connector, not a missing SLR Skill. If `slr_config_profiles` is available, call it to report the safe active-profile and credential-binding state. Explain that the review connector is enabled only after `/slr config token` validates and applies the project token. Do not claim the API token failed unless a config result says so, and do not tell the user to reconnect blindly.
 4. After the user reconnects or restarts the connector, rerun the read-only check. Do not claim setup is complete before it succeeds.
 
 ## Quick profile/token configuration
@@ -109,10 +109,12 @@ Follow this sequence:
 1. Call `slr_config_profiles` and show only safe profile metadata.
 2. For plain `/slr config`, ask the user to choose/create a profile, then use the existing credential-bound `slr_config_validate` and `slr_config_commit` flow.
 3. For `/slr config token <TOKEN>`, call `slr_config_token` with the token and optional selected profile. The connector validates the token first, then automatically binds `SLR_AGENT_TOKEN`, saves/switches/updates the profile, and enables both connectors.
+   - If the result has `ok: false`, inspect its structured `connection` or `error` fields. Report the safe HTTP `status`, `code`, and `message` exactly; these fields do not contain the token. Do not reduce the result to only `ok: false` or say there is no diagnostic when those fields are present.
+   - If the result reports `CREDENTIAL_BINDING_FAILED` or `CONNECTOR_REGISTRATION_FAILED`, report that code and its safe reason. Do not say the API rejected the token unless the API connection result is actually a 401.
 4. If `slr_config_token` returns `PROFILE_SELECTION_REQUIRED`, show only the safe profile names and ask the user to choose one; retry the same command with `profileName`. Never repeat the token in the response.
 5. Treat invalid tokens, missing credentials, connector registration failures, and an unavailable config connector as incomplete setup. Do not claim a profile changed unless the tool returns success; do not provide a terminal/manual fallback for this command.
 
-If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE`, do not claim that the profile or connector changed, and ask the user to reconnect or start a new Open-Science conversation. `/slr config` must never silently substitute the review connector's task tools.
+If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE` and do not claim that the profile or connector changed. If only the review connector is unavailable, report `REVIEW_CONNECTOR_UNAVAILABLE`; when possible, inspect profile status with `slr_config_profiles` and explain the next setup step from that result. `/slr config` must never silently substitute the review connector's task tools.
 
 When setup succeeds with no assigned tasks, do not suggest review commands; suggest assigning a paper in the SLR web application first.
 

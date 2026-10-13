@@ -187,7 +187,7 @@ Skill bắt buộc hiển thị block `Suggested next actions` sau mọi lệnh 
 
 ## 6. Xử lý lỗi
 
-- `401`: API từ chối project token. Kiểm tra token hiện tại thuộc đúng Open-Science agent và reviewer/project workspace, đồng thời xác nhận API base URL đúng. Nếu vẫn lỗi, nhờ SLR admin kiểm tra agent connection còn active; không rotate chỉ dựa trên mã `401`.
+- `401`: API từ chối project token. Production dùng `https://slr-api.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại từ đúng reviewer/project workspace. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực. Nếu đúng endpoint và token hiện tại vẫn lỗi, nhờ SLR admin kiểm tra agent connection.
 - `404`: task/paper không còn trong scope; tải lại danh sách.
 - `202`: full text đang xử lý; chờ `retryAfterSeconds`, không poll liên tục.
 - `409`: full text không khả dụng hoặc task đã hoàn tất. Không retry submit.
@@ -216,7 +216,7 @@ Package hiện expose năm tool review tương thích Claude, trong đó `connec
 
 ## In-chat profile configuration
 
-The in-chat flow uses the separate `slr-config` connector. Plain `/slr config` calls `slr_config_profiles`, asks the user to choose/create a profile, then uses the credential-bound `slr_config_validate` and `slr_config_commit` flow. The quick path `/slr config token <TOKEN>` calls `slr_config_token`, validates before mutation, binds the encrypted `SLR_AGENT_TOKEN` credential, and updates/enables both connectors automatically. The token is never echoed or returned. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
+The in-chat flow uses the separate `slr-config` connector. Plain `/slr config` calls `slr_config_profiles`, asks the user to choose/create a profile, then uses the credential-bound `slr_config_validate` and `slr_config_commit` flow. The quick path `/slr config token <TOKEN>` calls `slr_config_token`, validates before mutation, binds the encrypted `SLR_AGENT_TOKEN` credential, and updates/enables both connectors automatically. The token is never echoed or returned. When validation returns `ok: false`, show the safe HTTP status, error code, and API message from its `connection` object. When connector registration fails, show its registration code and reason. If the config connector is unavailable, the operation stops and must not claim that local configuration changed.
 
 Use `/slr config` when the local project profile needs to change, or use `/slr config token <TOKEN>` for the quick token path. An exact token match switches, a matching project ID updates, and otherwise the token is saved to the selected profile. The raw token is never displayed, returned by MCP, or written to connector JSON.
 

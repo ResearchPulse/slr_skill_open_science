@@ -2,7 +2,7 @@
 
 | Status/code | Action |
 |---|---|
-| `401` | Stop. The API rejected the project token. Check that it is the current token for the Open-Science agent in the intended reviewer/project workspace and that the API base URL is correct. Ask the SLR administrator to verify the connection is active if those match. Do not recommend rotating/revoking unless the token is known to be exposed or the administrator confirms it is invalidated. Never ask them to paste it into chat. |
+| `401` | Stop. Confirm the API base URL is `https://slr-api.hyperdatalab.org/api`, then retrieve the current `slrp_...` token from the same reviewer's project workspace. Rotating the token, disabling access, or switching agents invalidates the previous token. If the endpoint and current workspace token match, ask the SLR administrator to verify the agent connection is active. Never ask them to paste the token into chat. |
 | `404` | Stop the current task. Refresh the task list; do not guess an ID. |
 | `409 FULLTEXT_STAGE_REQUIRED` | Stop without retrying. Markdown was requested outside the `FULL_TEXT` stage or without the task's `markdownPath`; use task details to determine the allowed action. |
 | Other `409` on full text | Explain that Markdown is unavailable; suggest uploading the PDF in the SLR web app and retrying the task; do not submit based on invented content. |

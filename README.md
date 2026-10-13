@@ -189,7 +189,7 @@ Setup quản lý runtime, skill, profile và connector. Khi chạy tương tác,
 
 | Tình huống | Cách xử lý |
 | --- | --- |
-| `401` | API từ chối project token. Kiểm tra token hiện tại có thuộc đúng Open-Science agent/reviewer/project và API base URL đúng; nhờ SLR admin kiểm tra kết nối còn active. Chỉ rotate nếu token bị lộ hoặc admin xác nhận token đã bị vô hiệu hóa. |
+| `401` | API từ chối project token. Production dùng `https://slr-api.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại trong AI workspace của đúng reviewer/project. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực. Nếu đúng endpoint và token hiện tại vẫn lỗi, nhờ SLR admin kiểm tra kết nối. |
 | `404` | Task không còn trong phạm vi. Tải lại `/slr tasks` và chọn task đang được giao. |
 | `202` | Full-text extraction đang chạy. Chờ thời gian `Retry-After`; không poll liên tục. |
 | `409 FULLTEXT_STAGE_REQUIRED` | Không thử lại. Chỉ yêu cầu Markdown cho task `FULL_TEXT` có `markdownPath`. |

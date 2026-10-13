@@ -18,6 +18,8 @@ Authorization: Bearer <project-agent-token>
 
 The token scopes requests to one agent, one project, and one reviewer workspace. The server rejects inactive tokens and does not return tasks belonging to another reviewer or project. Never put the token in source code or logs.
 
+For the production SLR deployment, use `https://slr-api.hyperdatalab.org/api` as the API base URL. The token must be the current `slrp_...` token shown in the same reviewer's **My AI review workspace** for the intended project. Rotating the token, disabling access, or switching agents invalidates the old token; retrieve the current token from that workspace before reconnecting the MCP credential.
+
 All JSON success responses use this envelope:
 
 ```json
@@ -205,7 +207,7 @@ Successful submission returns HTTP `200`, the updated task, and sets its status 
 | HTTP status | Typical cause |
 | --- | --- |
 | `400` | Invalid `limit`, cursor, or result body |
-| `401` | Missing, malformed, rotated, or inactive token. Copy the current reviewer workspace token and update the MCP connection. |
+| `401` | Missing, malformed, rotated, inactive, or issued for a different agent/reviewer/project. Confirm the API base URL is `https://slr-api.hyperdatalab.org/api` and retrieve the current `slrp_...` token from the same reviewer's project workspace. Rotating, disabling, or switching agents invalidates an older token. |
 | `404` | Task does not exist or is outside the token's agent/project scope |
 | `409` | Task already completed or full-text content unavailable |
 | `500` | Unexpected backend error; retry with backoff |
