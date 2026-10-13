@@ -45,6 +45,8 @@ The process communicates over stdio. Protocol messages use stdout; diagnostics u
 
 The last tool is a write operation. The Open-Science skill shows the exact draft and asks the user for one `confirm` or `cancel`, then makes the first safe call. That call returns a digest and sends no backend request; the skill automatically repeats it with `confirmation: { confirm: true, digest }`, without a second prompt. Only then does the server send the backend POST. The digest handshake remains enforced even when the host does not support MCP elicitation.
 
+`get_task_fulltext` requires `taskId`, `stage: "FULL_TEXT"`, and the `markdownPath` returned by `get_assigned_task`. Do not call it for `TITLE_ABSTRACT` tasks. The backend independently enforces task ownership, stage, and Markdown availability; `202` includes the retry delay and `409 FULLTEXT_STAGE_REQUIRED` must not be retried.
+
 ## Development
 
 ```bash

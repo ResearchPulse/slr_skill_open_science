@@ -41,10 +41,10 @@ Route these commands as follows:
 - `/slr drafts` — list local draft files; never treat a draft as submitted.
 - `/slr config` — use the separate local config connector to inspect profiles and configure the host-bound credential.
 - `/slr config token <TOKEN>` — validate and apply the supplied project token through the config connector; never echo it in the response.
-- `/slr task <taskId>` — call `get_assigned_task`.
-- `/slr fulltext <taskId>` — call `get_task_fulltext` once and honor `retryAfterSeconds` when pending.
+- `/slr task <taskId>` — call `get_assigned_task`; use its `protocolSnapshot` as the criteria of record.
+- `/slr fulltext <taskId>` — call `get_assigned_task` first and call `get_task_fulltext` only when `stage` is `FULL_TEXT` and `markdownPath` is present; pass both returned values and honor `retryAfterSeconds` when pending.
 - `/slr review <taskId>` — run the review state machine below.
-- `/slr review next` — choose the first task whose status is `ASSIGNED`; process one task only.
+- `/slr review next` — choose the first eligible `ASSIGNED` task; `TITLE_ABSTRACT` is eligible from title/abstract, while `FULL_TEXT` requires available Markdown. Process one task only.
 - `/slr review [N|ids]` — review the first N or the selected task ids, never auto-submit.
 - `/slr drafts` — list local review drafts and their decisions.
 - `/slr edit <taskId> <instruction>` — revise a local draft, then show the exact changed payload.
@@ -60,9 +60,9 @@ Route these commands as follows:
 After every successful command, finish with a visible `Suggested next actions` block. Keep it actionable and do not present actions that the current task state cannot support. Do not omit this footer after `/slr tasks`, `/slr task`, `/slr review`, or a completed/cancelled submission.
 
 - `/slr setup` or `/slr status`: if assigned tasks exist, suggest `/slr tasks` and `/slr review next`; otherwise suggest assigning a paper in the SLR web application and then running `/slr tasks`.
-- `/slr tasks`: suggest `/slr task <taskId>` for a selected task. Do not imply that the paper can be reviewed until its full-text status is known.
-- `/slr task <taskId>`: if full text is available, suggest `/slr review <taskId>`; if it is unavailable, tell the user to upload the PDF in the SLR web application before reviewing; if it is processing, suggest retrying after the returned delay.
-- `/slr fulltext <taskId>`: if Markdown is available, suggest `/slr review <taskId>`; for pending or unavailable text, suggest only the wait/upload action.
+- `/slr tasks`: suggest `/slr task <taskId>` for a selected task. For `TITLE_ABSTRACT`, title and abstract are sufficient; for `FULL_TEXT`, check Markdown availability before suggesting review.
+- `/slr task <taskId>`: for `TITLE_ABSTRACT`, suggest `/slr review <taskId>` using title and abstract; for `FULL_TEXT`, suggest review only when Markdown is available, otherwise suggest the returned wait/upload action.
+- `/slr fulltext <taskId>`: request Markdown only for `FULL_TEXT` tasks with `markdownPath`; if available, suggest `/slr review <taskId>`, and for pending or unavailable text suggest only the wait/upload action.
 - `/slr review <taskId>`: prepare the exact payload, show the draft, and ask for one `confirm` or `cancel`. After `confirm`, make the safe call and complete the digest-bound call automatically; do not ask for a second confirmation.
 - After a successful submission: suggest `/slr tasks` to choose the next assigned paper and `/slr status` to refresh project state.
 - After `cancel`, report that nothing was submitted and suggest `/slr task <taskId>` or `/slr tasks` if the user wants to choose another paper.
@@ -132,15 +132,17 @@ Follow these states in order:
 1. `CONNECTION_CHECK`: confirm that the MCP server is available with a read-only call.
 2. `PROFILE_CHECK`: identify the active profile/project from connector metadata. If profile selection is ambiguous, stop and ask the user to reconnect the intended profile.
 3. `TASK_SELECTION`: select an `ASSIGNED` task. Never submit for `COMPLETED`.
-4. `PAPER_CONTEXT`: call `get_assigned_task` and read project criteria, instructions, and metadata.
-5. `PAPER_READING`: call `get_task_fulltext`. If the result is pending, stop and tell the user when to retry. Do not tight-poll.
+4. `PAPER_CONTEXT`: call `get_assigned_task`; use the task-time `protocolSnapshot` as the criteria of record, along with task instructions and paper metadata.
+5. `PAPER_READING`: for `TITLE_ABSTRACT`, use only title and abstract and do not request Markdown. For `FULL_TEXT`, call `get_task_fulltext` only when the task includes `markdownPath`, passing `stage: "FULL_TEXT"` and that exact path. If pending, stop and tell the user when to retry; do not tight-poll.
 6. `REVIEW_DRAFT`: compare the paper with inclusion and exclusion criteria. Draft a decision, and use the required evidence-based `reasoning` as the agent's review reason/comment, plus optional structured data.
 7. `DRAFT_PERSISTENCE`: save the candidate under `paper-review/drafts/<taskId>.json` before asking for confirmation. Never include the bearer token or full paper text.
 8. `USER_CONFIRMATION`: show the exact decision, reasoning/reason-comment, and data. Ask for one explicit `confirm` or `cancel` before calling the write tool.
 9. `DIGEST_HANDSHAKE_AND_SUBMIT`: on `confirm`, call `submit_review_result` with the exact payload. If it returns `CONFIRMATION_REQUIRED` and a digest, immediately call the same tool with the unchanged payload plus `confirmation: { confirm: true, digest }`. On `cancel`, stop without either write call. No backend POST occurs before the confirmed second call.
 10. `RECEIPT`: after a successful response, save a redacted receipt under `paper-review/submitted/<taskId>.json`, report the accepted result, and show the next-actions footer. Do not automatically select another paper.
 
-If `get_task_fulltext` reports that Markdown is unavailable, stop before `REVIEW_DRAFT`, explain that the PDF must be uploaded in the SLR web application, and do not recommend a review based on an invented or incomplete full text.
+If a `FULL_TEXT` task has no `markdownPath`, or `get_task_fulltext` reports Markdown unavailable, stop before `REVIEW_DRAFT`, explain that the PDF must be uploaded in the SLR web application, and do not recommend a review based on invented or incomplete full text. A pending extraction also pauses review until the returned retry delay. These full-text restrictions do not apply to `TITLE_ABSTRACT` tasks.
+
+An AI result completes only the assigned AI task. It does not create or change a human screening decision, paper status, or Human-vs-Human conflict. Describe submitted content as an AI recommendation, not a final human decision.
 
 If the user changes the task, changes the draft, answers ambiguously, or says no, return to `REVIEW_DRAFT` or stop without calling the write tool.
 

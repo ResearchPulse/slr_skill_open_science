@@ -9,6 +9,12 @@ export const taskIdSchema = z.object({
   taskId: z.string().trim().min(1).max(160).describe('Task identifier returned by list_assigned_tasks.'),
 }).strict();
 
+export const fullTextRequestSchema = z.object({
+  taskId: z.string().trim().min(1).max(160).describe('Assigned task identifier.'),
+  stage: z.literal('FULL_TEXT').describe('Must be the task stage returned by get_assigned_task.'),
+  markdownPath: z.string().trim().min(1).max(2000).describe('Must be the markdownPath returned by get_assigned_task.'),
+}).strict();
+
 export const submitReviewResultSchema = z.object({
   taskId: z.string().trim().min(1).max(160).describe('Assigned task identifier.'),
   decision: z.string().trim().min(1).max(100).describe('Screening decision, commonly INCLUDE, EXCLUDE, or UNCERTAIN.'),

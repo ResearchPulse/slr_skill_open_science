@@ -49,12 +49,13 @@ Use these state-specific variants:
 |---|---|
 | Setup/status succeeds with assigned tasks | `/slr tasks` or `/slr review next` |
 | Setup/status succeeds with no assigned tasks | Assign a paper in the SLR web app, then `/slr tasks` |
-| Task details have full text available | `/slr review <taskId>` |
-| Full text is processing | Retry after `retryAfterSeconds`; do not review yet |
-| Full text is unavailable | Upload the paper PDF in the SLR web app, then retry `/slr task <taskId>` |
+| TITLE_ABSTRACT task is assigned | `/slr review <taskId>` using title and abstract |
+| FULL_TEXT is available | `/slr review <taskId>` |
+| FULL_TEXT is processing | Retry after `retryAfterSeconds`; do not review yet |
+| FULL_TEXT is unavailable | Upload the paper PDF in the SLR web app, then retry `/slr task <taskId>` |
 | Exact review draft is displayed | Reply `confirm` once or `cancel`; the digest call is handled automatically |
 
-Do not suggest `/slr review` for unavailable or pending full text. Never suggest
+Do not suggest `/slr review` for FULL_TEXT tasks with unavailable or pending Markdown. Never suggest
 `/slr submit` or `/slr auto` unless the user explicitly asks for that workflow.
 Both still require the same confirmation-gated MCP write.
 
@@ -144,7 +145,7 @@ Do not claim the local process is online independently of a successful read-only
 
 ## Task list response
 
-Call `list_assigned_tasks` with the requested limit, defaulting to 25. Show task ID, status, paper title, year, journal, and full-text status when available. Preserve `nextCursor` internally and ask before loading another page.
+Call `list_assigned_tasks` with the requested limit, defaulting to 25. Show task ID, status, stage, paper title, year, journal, and full-text status when available. Preserve `nextCursor` internally and ask before loading another page.
 
 Filter review selection to `status: ASSIGNED`. A completed task is informational only.
 
@@ -153,12 +154,12 @@ End the response with a visible block like this, using only the applicable branc
 ```text
 Suggested next actions:
 - /slr task <taskId> — inspect the selected paper
-- If full text is available: /slr review <taskId>
-- If full text is processing: retry after the returned delay
-- If full text is unavailable: upload the PDF in the SLR web application
+- For TITLE_ABSTRACT: /slr review <taskId> using title and abstract
+- For FULL_TEXT with Markdown ready: /slr review <taskId>
+- For FULL_TEXT processing or unavailable: wait the returned delay or upload the PDF
 ```
 
-Do not suggest `/slr review` for unavailable or pending full text.
+Do not suggest `/slr review` for a FULL_TEXT task with unavailable or pending Markdown. A TITLE_ABSTRACT task may be reviewed from its title and abstract regardless of full-text status.
 
 ## Task detail response
 
@@ -166,12 +167,13 @@ After `/slr task <taskId>`, always show a visible `Suggested next actions` block
 
 ```text
 Suggested next actions:
-- Full text available: /slr review <taskId>
-- Full text processing: retry after <retryAfterSeconds> seconds
-- Full text unavailable: upload the paper PDF, then retry /slr task <taskId>
+- TITLE_ABSTRACT: /slr review <taskId> using title and abstract
+- FULL_TEXT with Markdown available: /slr review <taskId>
+- FULL_TEXT processing: retry after <retryAfterSeconds> seconds
+- FULL_TEXT unavailable: upload the paper PDF, then retry /slr task <taskId>
 ```
 
-Render only the branch that matches the returned full-text status.
+Render only the branch that matches the task stage and returned status. For FULL_TEXT, call `get_task_fulltext` only if `stage` is `FULL_TEXT` and `markdownPath` is present; pass the exact returned values. Never construct a Markdown URL or retry `409 FULLTEXT_STAGE_REQUIRED`.
 
 ## Full-text response
 
@@ -186,7 +188,7 @@ Suggested next actions:
 - Or retry /slr task <taskId> after the delay.
 ```
 
-For `404`, explain that the task or assigned paper is unavailable and suggest refreshing `/slr tasks`; do not suggest uploading a PDF for a missing task. For `409`, explain that Markdown is unavailable and suggest uploading the PDF in the SLR web application. Do not expose backend URLs or credentials.
+For `404`, explain that the task or assigned paper is unavailable and suggest refreshing `/slr tasks`; do not suggest uploading a PDF for a missing task. For `409 FULLTEXT_STAGE_REQUIRED`, stop without retrying; this indicates Markdown was requested outside the permitted FULL_TEXT task/path. For other full-text `409` errors, explain that Markdown is unavailable and suggest uploading the PDF in the SLR web application. Do not expose backend URLs or credentials.
 
 For a `409` full-text-unavailable result, end with:
 

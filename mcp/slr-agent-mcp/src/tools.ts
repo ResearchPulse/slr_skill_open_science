@@ -5,6 +5,7 @@ import { AgentApiError, redactSecret, toolError, type ToolTextResult } from './e
 import { buildConfirmationPayload, confirmationDigest } from './confirmation.js';
 import {
   listAssignedTasksSchema,
+  fullTextRequestSchema,
   submitReviewResultSchema,
   taskIdSchema,
 } from './schemas.js';
@@ -119,12 +120,15 @@ export function registerAgentTools(server: McpServer, client: AgentApiClient, co
     'get_task_fulltext',
     {
       title: 'Get SLR Task Full Text',
-      description: 'Retrieve the assigned paper Markdown. If extraction is pending, return retryAfterSeconds and do not poll repeatedly inside this call.',
-      inputSchema: taskIdSchema,
+      description: 'Retrieve paper Markdown only for a task whose get_assigned_task response has stage FULL_TEXT and a markdownPath. Pass both returned values. If extraction is pending, return retryAfterSeconds and do not poll repeatedly inside this call. A 409 FULLTEXT_STAGE_REQUIRED is terminal for this call and must not be retried.',
+      inputSchema: fullTextRequestSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ taskId }): Promise<ToolTextResult> => {
+    async ({ taskId, stage, markdownPath }): Promise<ToolTextResult> => {
       try {
+        if (stage !== 'FULL_TEXT' || !markdownPath.trim()) {
+          return toolError(new AgentApiError('Markdown is available only for FULL_TEXT tasks that include markdownPath', 409, 'FULLTEXT_STAGE_REQUIRED'), config.agentToken);
+        }
         const result = await client.getTaskFullText(taskId);
         return result.kind === 'ready' ? markdownResult(result.markdown, config.agentToken) : jsonResult(result, config.agentToken);
       } catch (error) {

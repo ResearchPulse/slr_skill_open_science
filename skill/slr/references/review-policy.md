@@ -3,7 +3,8 @@
 ## Evidence workflow
 
 1. Read the project research questions, inclusion criteria, exclusion criteria, and task instructions.
-2. Read the paper title, abstract, metadata, and full text when available.
+2. Follow the assigned task stage: `TITLE_ABSTRACT` uses title and abstract only; `FULL_TEXT` uses Markdown when the task includes `markdownPath` and extraction is complete.
+   Use the task's `protocolSnapshot` as the authoritative criteria for this review.
 3. Separate direct evidence from inference. Identify section/page or passage references when the Markdown provides them.
 4. Select `INCLUDE`, `EXCLUDE`, or `UNCERTAIN`, unless the project uses another documented decision vocabulary.
 5. Explain the decision in concise evidence-based language.
@@ -63,7 +64,7 @@ The schema is flexible, but `data` must remain a JSON object. Do not add chain-o
 Use an explicit question:
 
 ```text
-This will mark task <taskId> as completed in the SLR project.
+This will record an AI recommendation and complete task <taskId>. It does not create a human screening decision or change paper status.
 Decision: <decision>
 Reasoning: <reasoning>
 Data: <data>

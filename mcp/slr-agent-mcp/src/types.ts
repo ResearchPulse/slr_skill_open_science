@@ -1,6 +1,16 @@
 export type JsonObject = Record<string, unknown>;
 
 export type AgentTaskStatus = 'ASSIGNED' | 'COMPLETED' | string;
+export type AgentTaskStage = 'TITLE_ABSTRACT' | 'FULL_TEXT' | string;
+
+export interface ProtocolSnapshot {
+  version?: string;
+  capturedAt?: string;
+  researchQuestions?: string[];
+  inclusionCriteria?: string[];
+  exclusionCriteria?: string[];
+  [key: string]: unknown;
+}
 
 export type FullTextStatus =
   | 'PENDING'
@@ -43,8 +53,10 @@ export interface AgentTask {
   projectId: string;
   projectName: string;
   paperId: string;
+  stage?: AgentTaskStage;
   paperTitle?: string;
   instructions: string;
+  protocolSnapshot?: ProtocolSnapshot;
   status: AgentTaskStatus;
   createdAt: string;
   createdBy: string;
@@ -70,6 +82,12 @@ export interface TaskDetail {
   task: AgentTask;
   project: ProjectContext;
   paper: PaperSummary;
+}
+
+export interface FullTextRequest {
+  taskId: string;
+  stage: 'FULL_TEXT';
+  markdownPath: string;
 }
 
 export interface SubmitReviewInput {
