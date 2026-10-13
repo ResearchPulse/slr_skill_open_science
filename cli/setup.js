@@ -50,12 +50,23 @@ export async function testProfileConnection(profile, token) {
       signal: controller.signal,
     });
     if (!response.ok) {
-      await response.body?.cancel();
+      const body = await response.json().catch(() => null);
+      const apiError = body && typeof body === 'object' && body.error && typeof body.error === 'object'
+        ? body.error
+        : null;
+      const redact = value => typeof value === 'string'
+        ? value.split(String(token)).join('[REDACTED]').slice(0, 500)
+        : null;
+      const apiCode = redact(apiError?.code);
+      const safeCode = apiCode && /^[A-Za-z0-9_:-]{1,64}$/.test(apiCode) ? apiCode : null;
+      const apiMessage = redact(apiError?.message);
       return {
         connected: false,
         status: response.status,
-        code: `HTTP_${response.status}`,
-        message: `SLR API request failed with HTTP ${response.status}.`,
+        code: safeCode || `HTTP_${response.status}`,
+        message: apiMessage || (response.status === 401
+          ? 'The SLR API rejected this project token. Confirm it is the current token for the Open-Science agent and reviewer/project workspace, and verify the configured SLR API base URL.'
+          : `SLR API request failed with HTTP ${response.status}.`),
       };
     }
     let body;

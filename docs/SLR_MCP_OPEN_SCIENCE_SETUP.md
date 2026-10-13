@@ -187,7 +187,7 @@ Skill bắt buộc hiển thị block `Suggested next actions` sau mọi lệnh 
 
 ## 6. Xử lý lỗi
 
-- `401`: token thiếu, sai, đã rotate hoặc bị disable. Không gửi token vào chat.
+- `401`: API từ chối project token. Kiểm tra token hiện tại thuộc đúng Open-Science agent và reviewer/project workspace, đồng thời xác nhận API base URL đúng. Nếu vẫn lỗi, nhờ SLR admin kiểm tra agent connection còn active; không rotate chỉ dựa trên mã `401`.
 - `404`: task/paper không còn trong scope; tải lại danh sách.
 - `202`: full text đang xử lý; chờ `retryAfterSeconds`, không poll liên tục.
 - `409`: full text không khả dụng hoặc task đã hoàn tất. Không retry submit.

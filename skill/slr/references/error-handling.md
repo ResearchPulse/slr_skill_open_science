@@ -2,7 +2,7 @@
 
 | Status/code | Action |
 |---|---|
-| `401` | Stop. Ask the user to check local connector token or rotate it in SLR settings. Never ask them to paste it into chat. |
+| `401` | Stop. The API rejected the project token. Check that it is the current token for the Open-Science agent in the intended reviewer/project workspace and that the API base URL is correct. Ask the SLR administrator to verify the connection is active if those match. Do not recommend rotating/revoking unless the token is known to be exposed or the administrator confirms it is invalidated. Never ask them to paste it into chat. |
 | `404` | Stop the current task. Refresh the task list; do not guess an ID. |
 | `409 FULLTEXT_STAGE_REQUIRED` | Stop without retrying. Markdown was requested outside the `FULL_TEXT` stage or without the task's `markdownPath`; use task details to determine the allowed action. |
 | Other `409` on full text | Explain that Markdown is unavailable; suggest uploading the PDF in the SLR web app and retrying the task; do not submit based on invented content. |

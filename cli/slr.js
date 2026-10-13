@@ -629,6 +629,7 @@ function printSetup(report, asJson, setup = {}) {
   } else if (setup.connection) {
     console.log('SLR setup incomplete');
     console.log(`API: failed (${setup.connection.code || 'unknown'})`);
+    if (setup.connection.message) console.log(`API detail: ${setup.connection.message}`);
   } else if (setup.tokenConfigured) {
     console.log('SLR connectors ready');
     console.log('API: not checked; run /slr setup');

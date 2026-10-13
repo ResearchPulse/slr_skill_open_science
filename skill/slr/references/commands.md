@@ -106,7 +106,7 @@ Reconnect the SLR review connector, then run /slr setup again.
 
 Never request or display the raw project token in chat. Do not claim setup is ready until the read-only call succeeds.
 
-If the user uses `/slr config token <TOKEN>`, pass the token only to `slr_config_token`; never echo it, summarize it, put it in a draft, or return it in a tool result. If the token was exposed outside this internal command flow, recommend rotation in the SLR project settings.
+If the user uses `/slr config token <TOKEN>`, pass the token only to `slr_config_token`; never echo it, summarize it, put it in a draft, or return it in a tool result. A `401` alone does not prove the token was exposed; check the token's agent/project workspace and API base URL, then ask the SLR administrator to verify the connection. Recommend rotation only if the token is known to be exposed or the administrator confirms it was invalidated.
 
 ## Config response
 
