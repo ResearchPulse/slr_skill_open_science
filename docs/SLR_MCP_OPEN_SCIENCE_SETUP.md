@@ -14,6 +14,15 @@ Token này chỉ có scope trên agent/project đó. Không dán token vào chat
 
 ## 2. Cài root package và cấu hình project
 
+Trên Windows, cài launcher CLI trong ứng dụng Open-Science trước: **Settings → General → Command line tool → Install command**. Mở PowerShell mới rồi xác nhận lệnh hoạt động:
+
+```powershell
+Get-Command open-science | Select-Object Name, Source
+open-science --help
+```
+
+Nếu lệnh vẫn chưa được nhận diện, xem đường dẫn launcher hiển thị trong Settings và đặt `OPEN_SCIENCE_CLI` tới file `open-science.cmd` trước khi chạy installer.
+
 Release root package được gọi bằng GitHub reference cố định:
 
 ```powershell

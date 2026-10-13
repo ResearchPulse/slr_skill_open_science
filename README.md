@@ -51,7 +51,7 @@ npx github:ResearchPulse/slr_skill_open_science
 | Thành phần | Yêu cầu | Ghi chú |
 | --- | --- | --- |
 | Node.js | ≥ 20 | Cần cho package và MCP runtime |
-| Open-Science CLI | Bản tương thích | Installer dùng CLI để đăng ký connector; Credential được tạo khi cấu hình token project |
+| Open-Science CLI | Bản tương thích | Bật trong Open-Science: Settings → General → Command line tool → Install command |
 | SLR Agent token | Cấu hình sau trong từng project | Được lưu trong Credential mã hóa `SLR_AGENT_TOKEN` |
 
 ## 🚀 Cài đặt
@@ -63,6 +63,15 @@ Chạy trong PowerShell hoặc terminal có Node.js:
 ```powershell
 npx github:ResearchPulse/slr_skill_open_science
 ```
+
+Trước khi chạy, cài launcher CLI từ ứng dụng Open-Science: vào **Settings → General → Command line tool → Install command**, sau đó mở cửa sổ PowerShell mới và kiểm tra:
+
+```powershell
+Get-Command open-science
+open-science --help
+```
+
+Nếu `Get-Command` không tìm thấy lệnh, installer vẫn có thể cài skill nhưng không thể tự đăng ký MCP connector.
 
 Installer cài skill vào `~/.agents/skills/slr`, tạo profile mặc định và tự đăng ký/bật connector cấu hình `slr-config`. Installer không hỏi project token và không tạo review connector ở bước này. Với mỗi project, mở conversation Open-Science mới rồi chạy `/slr config token <TOKEN>`; connector sẽ kiểm tra token, lưu Credential mã hóa `SLR_AGENT_TOKEN`, cập nhật profile và đăng ký/bật cả connector review lẫn connector cấu hình. Nếu Open-Science daemon chưa chạy, installer sẽ thử khởi động daemon.
 
