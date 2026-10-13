@@ -3,8 +3,9 @@
 
 Open-Science launches it as a local custom connector on the host, so it always reaches the
 backend and the real ~/.config/slr-open-science, even when the agent's shell is sandboxed.
-It is the primary channel for every API call and for configuration from chat; the skill's
-slr.py CLI only handles local drafts and the audit log.
+It is the only channel the chat needs: API calls, configuration, and the local drafts +
+audit log (~/slr-paper-review/<profile>/, or $REVIEW_WORKDIR). Open-Science agents may not run
+scripts or read files inside the skill folder, so nothing in the skill depends on that.
 
 Stdlib only. Config is read on every call from slr.py's stored profile, so
 `/slr config token|url|use` takes effect immediately without reconnecting the connector.
@@ -15,7 +16,11 @@ Tools:
   list_tasks(status?)                                 tasks + project context
   get_task(task_id)                                   one task / status / result
   get_markdown(task_id, max_wait?)                    full text (FULL_TEXT tasks only)
-  submit_result(task_id, decision, reasoning, data?)  POST a vote (final)
+  save_draft(task_id, decision, reasoning, data, title?)  validate + save/replace a local draft
+  list_drafts()                                       pending drafts table + submitted ids
+  get_draft(task_id)                                  one saved draft (exact body)
+  submit_drafts(task_ids?)                            POST saved drafts exactly as stored (final)
+  submit_result(task_id, decision, reasoning, data)   POST a vote without a draft (final)
   config_show()                                       profiles, token masked
   config_set_url(url, profile?)                       save API base URL
   config_set_token(token, profile?)                   save token + test (never echoed)
@@ -25,10 +30,16 @@ import json
 import os
 import sys
 import traceback
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from slr import (ApiError, Client, active_profile, build_body, set_token,  # noqa: E402
-                 set_url, show_config, use_profile)
+import slr  # noqa: E402
+from slr import (ApiError, Client, active_profile, build_body, drafts_table,  # noqa: E402
+                 get_draft, mark_submitted, save_draft, set_token, set_url, show_config,
+                 submit_drafts, use_profile)
+
+# Drafts live on the host, one folder per profile (the chat's working folder is not visible here).
+slr.WORKDIR_DEFAULT = lambda: Path.home() / "slr-paper-review" / active_profile()
 
 SERVER_INFO = {"name": "slr", "version": "1.0.0"}
 SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -43,7 +54,7 @@ DATA_SCHEMA = {
     "description": ("Structured assessment. criteria must cover every inclusion (IC1…) and exclusion "
                     "(EC1…) criterion of the task's protocolSnapshot, in API order. Also include studyDesign, "
                     "population, intervention, comparator, outcomes, exclusionTriggered and evidence "
-                    "(see references/review-rubric.md)."),
+                    "(see 'Vote format' in the /slr skill)."),
     "properties": {
         "basis": {"type": "string", "enum": ["title_abstract", "full_text", "partial_full_text"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -122,6 +133,48 @@ TOOLS = [
             "reasoning": {"type": "string", "description": "Reasoning text (max 16,000 chars)"},
             "data": DATA_SCHEMA},
             "required": ["task_id", "decision", "reasoning", "data"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+    {
+        "name": "save_draft",
+        "title": "Save SLR draft vote",
+        "description": ("Validate and save (or replace) the draft vote for one task on the host. Does NOT "
+                        "submit. Same body as submit_result; data must follow the rubric in the skill "
+                        "(basis, confidence, criteria for every IC/EC). Use it for /slr review and "
+                        "/slr edit."),
+        "inputSchema": {**_OBJ, "properties": {
+            **_TASK_ID,
+            "title": {"type": "string", "description": "Short paper title for the drafts table"},
+            "decision": {"type": "string", "description": "INCLUDE, EXCLUDE or UNCERTAIN", "maxLength": 100},
+            "reasoning": {"type": "string", "description": "Reasoning text (max 16,000 chars)"},
+            "data": DATA_SCHEMA},
+            "required": ["task_id", "decision", "reasoning", "data"]},
+        "annotations": {"idempotentHint": True},
+    },
+    {
+        "name": "list_drafts",
+        "title": "List SLR drafts",
+        "description": ("Pending drafts (task id, title, decision, confidence, key reason), counts by "
+                        "decision, and ids already submitted from this profile."),
+        "inputSchema": {**_OBJ, "properties": {}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_draft",
+        "title": "Get SLR draft",
+        "description": "Return one saved draft (pending or submitted) with its exact body.",
+        "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "submit_drafts",
+        "title": "Submit approved SLR drafts",
+        "description": ("POST saved drafts exactly as stored and move each accepted one to submitted. "
+                        "IRREVERSIBLE. Only call after the scientist explicitly approved these drafts. "
+                        "task_ids = the approved ids (omit only when every pending draft was approved). "
+                        "Stops the batch on 401. Per task: submitted / already_completed / error."),
+        "inputSchema": {**_OBJ, "properties": {
+            "task_ids": {"type": "array", "items": {"type": "string"}}}},
         "annotations": {"destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
     },
     {
@@ -208,12 +261,23 @@ def call_tool(name, args):
             tid = str(args["task_id"])
             try:
                 task = Client().submit(tid, body)
+                mark_submitted(tid, "submitted")
                 return tool_result({"taskId": tid, "status": "submitted", "decision": body["decision"],
                                     "taskStatus": (task or {}).get("status")})
             except ApiError as e:
                 if e.status == 409:
+                    mark_submitted(tid, "already_completed")
                     return tool_result({"taskId": tid, "status": "already_completed", "message": e.message})
                 raise
+        if name == "save_draft":
+            return tool_result(save_draft(str(args["task_id"]), args, str(args.get("title") or "")))
+        if name == "list_drafts":
+            return tool_result(drafts_table())
+        if name == "get_draft":
+            return tool_result(get_draft(str(args["task_id"])))
+        if name == "submit_drafts":
+            res = submit_drafts([str(i) for i in args.get("task_ids") or []] or None)
+            return tool_result(res, not res["ok"])
         if name == "config_show":
             return tool_result(show_config())
         if name == "config_set_url":
@@ -245,8 +309,9 @@ def handle(msg):
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
             "instructions": ("Connector for the /slr skill (systematic literature review screening). "
-                             "Use it for every SLR API call and for /slr config. submit_result only "
-                             "for votes the scientist approved. Never repeat the agent token."),
+                             "Use it for every SLR API call, /slr config and the drafts (save_draft, "
+                             "list_drafts, get_draft). submit_drafts / submit_result only for votes the "
+                             "scientist approved. Never repeat the agent token."),
         }}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}

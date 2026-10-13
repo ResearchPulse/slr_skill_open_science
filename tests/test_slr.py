@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 TOKEN = "slrp_test_token_1234567890"
-# Same shape as the Claude Science skill (references/review-rubric.md).
+# Same shape as the Claude Science skill (SKILL.md 'Vote format').
 DATA = {"basis": "title_abstract", "confidence": 0.9, "studyDesign": "RCT", "population": "Adults",
         "intervention": None, "comparator": None, "outcomes": [], "exclusionTriggered": [],
         "evidence": ["Abstract: adults aged 18-65"],
@@ -153,6 +153,7 @@ class McpEndToEnd(unittest.TestCase):
                            capture_output=True, text=True, encoding="utf-8")
         names = {t["name"] for t in json.loads(p.stdout)["result"]["tools"]}
         self.assertEqual(names, {"connection_test", "list_tasks", "get_task", "get_markdown", "submit_result",
+                                 "save_draft", "list_drafts", "get_draft", "submit_drafts",
                                  "config_show", "config_set_url", "config_set_token", "config_use"})
 
     def test_unconfigured_reports_config_error(self):
@@ -240,6 +241,38 @@ class McpEndToEnd(unittest.TestCase):
         self.assertFalse(sw["structuredContent"]["connected"])
         (back,) = self.mcp(("config_use", {"profile": "default"}))
         self.assertTrue(back["structuredContent"]["connected"])
+
+    def test_mcp_draft_flow_without_shell(self):
+        # Open-Science agents cannot run the skill's scripts: drafts go through the connector.
+        self.configure()
+        vote = {"task_id": "t-ta", "title": "Paper t-ta", "decision": "INCLUDE",
+                "reasoning": "Decision: INCLUDE\nKey reason: adults.", "data": DATA}
+        bad, saved, edited, table, one = self.mcp(
+            ("save_draft", {**vote, "data": {"confidence": 0.9, "stage": "TITLE_ABSTRACT"}}),
+            ("save_draft", vote),
+            ("save_draft", {**vote, "decision": "UNCERTAIN"}),
+            ("list_drafts", {}),
+            ("get_draft", {"task_id": "t-ta"}))
+        self.assertEqual(bad["structuredContent"]["code"], "VALIDATION")
+        self.assertFalse(saved["structuredContent"]["replaced"])
+        self.assertTrue(edited["structuredContent"]["replaced"])
+        t = table["structuredContent"]
+        self.assertEqual((t["pending"], t["drafts"][0]["keyReason"]), (1, "adults."))
+        self.assertEqual(one["structuredContent"]["body"]["data"], DATA)
+        self.assertEqual(FakeApi.posts, [])  # saving never submits
+
+        sent, again, after = self.mcp(("submit_drafts", {"task_ids": ["t-ta"]}),
+                                      ("submit_drafts", {"task_ids": ["t-ta"]}),
+                                      ("list_drafts", {}))
+        self.assertEqual(sent["structuredContent"]["results"][0]["result"], "submitted")
+        self.assertEqual(FakeApi.posts, [("t-ta", {"decision": "UNCERTAIN", "reasoning": vote["reasoning"],
+                                                   "data": DATA})])
+        self.assertTrue(again["isError"])
+        self.assertEqual(again["structuredContent"]["noDraft"], ["t-ta"])
+        self.assertEqual((after["structuredContent"]["pending"], after["structuredContent"]["submittedIds"]),
+                         (0, ["t-ta"]))
+        audit = (Path(self.env["REVIEW_WORKDIR"]) / "audit.jsonl").read_text(encoding="utf-8")
+        self.assertEqual([json.loads(l)["event"] for l in audit.splitlines()], ["draft", "edit", "submit"])
 
     def test_cli_draft_and_mark_submitted(self):
         def cli(*args):

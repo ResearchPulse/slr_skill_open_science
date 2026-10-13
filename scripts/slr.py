@@ -133,8 +133,14 @@ def _mask(tok):
     return f"set (…{tok[-4:]}, {len(tok)} chars)" if len(tok) >= 12 else "set"
 
 
+# Where drafts live when $REVIEW_WORKDIR is unset. The CLI uses ./paper-review; the MCP
+# connector (whose cwd is not the chat's) swaps in ~/slr-paper-review/<profile>.
+WORKDIR_DEFAULT = lambda: Path("paper-review")  # noqa: E731
+
+
 def workdir():
-    d = Path(os.environ.get("REVIEW_WORKDIR", "paper-review")).resolve()
+    env = os.environ.get("REVIEW_WORKDIR")
+    d = (Path(env).expanduser() if env else WORKDIR_DEFAULT()).resolve()
     for sub in ("fulltext", "drafts", "submitted"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     return d
@@ -156,7 +162,7 @@ def validate_data(data):
     """
     if not isinstance(data, dict):
         raise ApiError(None, "VALIDATION", "data must be a JSON object with basis, confidence and criteria "
-                       "(see references/review-rubric.md).")
+                       "(see 'Vote format' in the /slr skill).")
     if data.get("basis") not in BASES:
         raise ApiError(None, "VALIDATION", f"data.basis must be one of {', '.join(BASES)}.")
     conf = data.get("confidence")
@@ -428,13 +434,17 @@ def cmd_markdown(args):
     _out({"ok": True, "file": str(out), "chars": len(text)})
 
 
-def cmd_draft(args):
-    body = _read_args_body(args)
-    path = workdir() / "drafts" / f"{args.task_id}.json"
-    path.write_text(json.dumps({"taskId": args.task_id, "title": args.title, "body": body},
+# Library form (return dicts) — shared by the CLI below and the MCP connector's draft tools.
+
+def save_draft(task_id, body, title=""):
+    body = build_body(body.get("decision"), body.get("reasoning"), body.get("data"))
+    path = workdir() / "drafts" / f"{task_id}.json"
+    replaced = path.exists()
+    path.write_text(json.dumps({"taskId": task_id, "title": title or "", "body": body},
                                ensure_ascii=False, indent=2), encoding="utf-8")
-    log_event({"event": "draft", "taskId": args.task_id, "decision": body["decision"]})
-    _out({"ok": True, "draft": str(path), "decision": body["decision"]})
+    log_event({"event": "edit" if replaced else "draft", "taskId": task_id, "decision": body["decision"]})
+    return {"ok": True, "taskId": task_id, "draft": str(path), "decision": body["decision"],
+            "replaced": replaced}
 
 
 def _load_drafts(ids=None):
@@ -448,7 +458,16 @@ def _load_drafts(ids=None):
     return drafts
 
 
-def cmd_drafts(args):
+def get_draft(task_id):
+    for sub in ("drafts", "submitted"):
+        p = workdir() / sub / f"{task_id}.json"
+        if p.exists():
+            return {"ok": True, "state": "pending" if sub == "drafts" else "submitted",
+                    **json.loads(p.read_text(encoding="utf-8"))}
+    raise ApiError(None, "NOT_FOUND", f"No draft for task {task_id}.")
+
+
+def drafts_table():
     rows = []
     for d in _load_drafts():
         b = d["body"]
@@ -460,30 +479,32 @@ def cmd_drafts(args):
     counts = {}
     for r in rows:
         counts[r["decision"]] = counts.get(r["decision"], 0) + 1
-    _out({"ok": True, "pending": len(rows), "byDecision": counts, "drafts": rows})
+    done = sorted(p.stem for p in (workdir() / "submitted").glob("*.json"))
+    return {"ok": True, "workdir": str(workdir()), "pending": len(rows), "byDecision": counts,
+            "drafts": rows, "submittedIds": done}
 
 
-def cmd_mark_submitted(args):
-    """Record a vote that was sent by another channel (e.g. the MCP submit tool)."""
-    src = workdir() / "drafts" / f"{args.task_id}.json"
-    if args.result in ("submitted", "already_completed") and src.exists():
-        src.rename(workdir() / "submitted" / src.name)
-        moved = True
-    else:
-        moved = False
-    log_event({"event": "submit", "taskId": args.task_id, "result": args.result,
-               "via": args.via, **({"error": args.error} if args.error else {})})
-    _out({"ok": True, "taskId": args.task_id, "result": args.result, "draftMoved": moved})
+def mark_submitted(task_id, result, via="mcp", error=None):
+    """Record a vote that was sent by another channel."""
+    src = workdir() / "drafts" / f"{task_id}.json"
+    moved = result in ("submitted", "already_completed") and src.exists()
+    if moved:
+        src.replace(workdir() / "submitted" / src.name)
+    log_event({"event": "submit", "taskId": task_id, "result": result, "via": via,
+               **({"error": error} if error else {})})
+    return {"ok": True, "taskId": task_id, "result": result, "draftMoved": moved}
 
 
-def cmd_submit_drafts(args):
+def submit_drafts(ids=None):
+    """POST saved drafts exactly as stored; move each accepted one to submitted/. Stops on 401."""
     c = Client()
     results = []
-    for d in _load_drafts(set(args.ids) if args.ids else None):
+    for d in _load_drafts(set(ids) if ids else None):
         tid = d["taskId"]
         try:
-            c.submit(tid, d["body"])
-            res = {"taskId": tid, "result": "submitted", "decision": d["body"]["decision"]}
+            body = build_body(d["body"].get("decision"), d["body"].get("reasoning"), d["body"].get("data"))
+            c.submit(tid, body)
+            res = {"taskId": tid, "result": "submitted", "decision": body["decision"]}
         except ApiError as e:
             if e.exit_code == EXIT_CONFLICT:
                 res = {"taskId": tid, "result": "already_completed"}
@@ -494,12 +515,30 @@ def cmd_submit_drafts(args):
             else:
                 res = {"taskId": tid, "result": "error", "error": e.as_dict()}
         if res["result"] != "error":
-            d["_path"].rename(workdir() / "submitted" / d["_path"].name)
+            d["_path"].replace(workdir() / "submitted" / d["_path"].name)
         log_event({"event": "submit", **res})
         results.append(res)
-    ok = all(r["result"] != "error" for r in results)
-    _out({"ok": ok, "results": results})
-    if not ok:
+    missing = sorted(set(ids or []) - {r["taskId"] for r in results})
+    return {"ok": all(r["result"] != "error" for r in results) and not missing,
+            "results": results, **({"noDraft": missing} if missing else {})}
+
+
+def cmd_draft(args):
+    _out(save_draft(args.task_id, _read_args_body(args), args.title))
+
+
+def cmd_drafts(args):
+    _out(drafts_table())
+
+
+def cmd_mark_submitted(args):
+    _out(mark_submitted(args.task_id, args.result, args.via, args.error))
+
+
+def cmd_submit_drafts(args):
+    res = submit_drafts(args.ids)
+    _out(res)
+    if not res["ok"]:
         sys.exit(EXIT_ERROR)
 
 

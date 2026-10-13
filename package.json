@@ -8,7 +8,6 @@
   "files": [
     "bin/",
     "scripts/*.py",
-    "references/",
     "SKILL.md",
     "README.md",
     "AI_AGENT_TASK_API_CONTRACT.md"

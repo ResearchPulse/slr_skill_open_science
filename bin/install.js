@@ -23,7 +23,8 @@ const PKG_ROOT = path.resolve(__dirname, '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'));
 const SKILL_NAME = 'slr';
 const CONNECTOR_NAME = 'slr';
-const SKILL_ENTRIES = ['SKILL.md', 'scripts', 'references'];
+const SKILL_ENTRIES = ['SKILL.md', 'scripts'];
+const STALE_ENTRIES = ['references']; // inlined into SKILL.md
 const HOME = os.homedir();
 const IS_WIN = process.platform === 'win32';
 const DEFAULT_URL = 'https://slr-agent.hyperdatalab.org/api';
@@ -175,6 +176,7 @@ function copySkill(dir) {
     info('Replaced the skill installed by the previous slr_skill_open_science version');
   }
   fs.mkdirSync(dir, { recursive: true });
+  for (const entry of STALE_ENTRIES) fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
   for (const entry of SKILL_ENTRIES) {
     const dst = path.join(dir, entry);
     fs.rmSync(dst, { recursive: true, force: true });

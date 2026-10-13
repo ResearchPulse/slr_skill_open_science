@@ -41,7 +41,7 @@ npx github:ResearchPulse/slr_skill_open_science
 
 - 🔎 **Sàng lọc** từng bài theo IC/EC trong `protocolSnapshot` của task, mỗi nhận định đều trích dẫn section của bài.
 - ✍️ **Draft trước, gửi sau** — phiếu chỉ được gửi khi bạn đồng ý; có `audit.jsonl` làm nhật ký kiểm toán.
-- 🔌 **Một MCP connector `slr`** — 5 tool nghiệp vụ (`connection_test`, `list_tasks`, `get_task`, `get_markdown`, `submit_result`) + 4 tool cấu hình (`config_show`, `config_set_url`, `config_set_token`, `config_use`).
+- 🔌 **Một MCP connector `slr`** — task (`connection_test`, `list_tasks`, `get_task`, `get_markdown`), draft (`save_draft`, `list_drafts`, `get_draft`), gửi (`submit_drafts`, `submit_result`), cấu hình (`config_show`, `config_set_url`, `config_set_token`, `config_use`). Agent không cần shell.
 - 💬 **Cấu hình ngay trong chat** — `/slr config token <TOKEN>` có hiệu lực tức thì, không cần reconnect connector.
 - 🗂️ **Nhiều dự án** — mỗi dự án một profile, chuyển bằng `/slr config use`.
 - 🪶 **Không phụ thuộc** — Python thư viện chuẩn, installer Node không cần `npm install`.
@@ -124,7 +124,7 @@ Sau đó import lại skill trong **Settings → Skills** để Open-Science dù
 | Bước | Chi tiết |
 | --- | --- |
 | **1. Python** | Tự tìm `py -3` / `python3` / `python` (≥ 3.8). Connector dùng **đường dẫn tuyệt đối** tới `python.exe` nên không phụ thuộc PATH của app. |
-| **2. Skill** | Copy `SKILL.md`, `scripts/`, `references/` vào `~/.agents/skills/slr` — nơi Open-Science tìm khi bấm *Import installed skills*. |
+| **2. Skill** | Copy `SKILL.md` (tự chứa đủ lệnh + rubric) và `scripts/` (connector chạy từ đây) vào `~/.agents/skills/slr` — nơi Open-Science tìm khi bấm *Import installed skills*. |
 | **3. Cấu hình** | `slr.py config set-url` + `config set-token --stdin` → lưu ở `~/.config/slr-open-science/` (token quyền 0600), rồi test kết nối. |
 | **4. MCP** | Qua CLI `open-science`: tự khởi động daemon nếu chưa chạy (`start --no-open`), `connector add` (hoặc `update`) connector `slr` → `enable` → `test`. |
 
@@ -142,14 +142,18 @@ Open-Science chat ── /slr skill (SKILL.md)
         │
         ├── MCP connector "slr" ── scripts/slr_mcp.py ── Agent Task API  /api/agent/v1/...
         │      (chạy trên host: luôn có mạng + profile thật)
-        │      list / get / markdown / submit / config_*
+        │      tasks · markdown · drafts · submit · config_*
         │
-        └── CLI scripts/slr.py (local) ── ./paper-review/  drafts · submitted · fulltext · audit.jsonl
+        └── ~/slr-paper-review/<profile>/  drafts · submitted · audit.jsonl   (do connector ghi)
 ```
 
-**Khác với bộ Claude Science:** ở Open-Science, **mọi lệnh gọi API và cấu hình đều đi qua MCP** (sandbox
-của agent có thể không có mạng hoặc có HOME riêng). CLI chỉ làm việc cục bộ: tạo draft, bảng draft,
-ghi nhận đã gửi. Nếu agent không chạy được Python, skill hướng dẫn ghi draft trực tiếp cùng định dạng.
+**Khác với bộ Claude Science:** agent trong Open-Science **chỉ được nạp `SKILL.md`** — không được đọc file
+khác hay chạy script trong thư mục skill. Vì vậy:
+
+- `SKILL.md` **tự chứa** toàn bộ: lệnh, rubric sàng lọc, định dạng phiếu (không có `references/`).
+- **Mọi thao tác đều là tool MCP**: API, cấu hình, và cả draft (`save_draft`, `list_drafts`, `get_draft`,
+  `submit_drafts`). Connector chạy trên host nên luôn có mạng, profile thật và thư mục draft.
+- `scripts/slr.py` vẫn dùng được từ terminal (`config`, `draft`, `drafts`, `diag`…) nhưng chat không cần đến.
 
 Skill tuân theo [AI_AGENT_TASK_API_CONTRACT.md](AI_AGENT_TASK_API_CONTRACT.md): token gắn với agent +
 project + reviewer workspace; danh sách task lấy qua cursor; mỗi task chấm theo `protocolSnapshot`.
@@ -222,8 +226,8 @@ npx github:ResearchPulse/slr_skill_open_science uninstall --purge
 /slr setup  →  /slr review 10  →  /slr drafts  →  /slr edit <id> …  →  /slr submit
 ```
 
-File làm việc nằm trong `./paper-review/` của thư mục làm việc của phiên (hoặc `$REVIEW_WORKDIR`):
-`fulltext/` · `drafts/` · `submitted/` · `audit.jsonl` — hãy giữ lại làm nhật ký kiểm toán.
+Draft và nhật ký nằm trên máy trong `~/slr-paper-review/<profile>/` (hoặc `$REVIEW_WORKDIR`):
+`drafts/` · `submitted/` · `audit.jsonl` — hãy giữ lại làm nhật ký kiểm toán.
 
 ---
 
@@ -255,7 +259,8 @@ npm test          # = python -m unittest discover -s tests -v
 
 `tests/test_slr.py` chạy `slr_mcp.py` thật qua stdio với một Agent Task API giả (cục bộ, không cần
 mạng/token): phân trang cursor, chặn Markdown cho `TITLE_ABSTRACT`, `202` pending, gửi một lần rồi `409`,
-validate body trước khi POST, cấu hình trong chat không lộ token, chuyển profile tức thì, CLI draft.
+validate body trước khi POST, bắt buộc `criteria`, phiếu định dạng Claude, draft qua MCP (lưu → bảng → gửi),
+cấu hình trong chat không lộ token, chuyển profile tức thì, CLI draft.
 
 Chạy connector trực tiếp:
 
@@ -269,12 +274,10 @@ python scripts/slr_mcp.py      # stdin/stdout JSON-RPC; log ra stderr
 
 ```text
 slr_skill_open_science/
-├── SKILL.md                         # định nghĩa skill /slr
+├── SKILL.md                         # skill /slr — tự chứa: lệnh, rubric, định dạng phiếu
 ├── scripts/
 │   ├── slr.py                       # CLI + API client + profile store (stdlib)
 │   └── slr_mcp.py                   # MCP stdio server (connector "slr")
-├── references/
-│   └── review-rubric.md             # rubric chấm theo tiêu chí
 ├── bin/
 │   └── install.js                   # trình cài đặt (npx / npm bin), không dependency
 ├── tests/
