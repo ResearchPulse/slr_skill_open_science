@@ -20,7 +20,7 @@ The token scopes requests to one agent, one project, and one reviewer workspace.
 
 For the production SLR deployment, use `https://slr-agent.hyperdatalab.org/api` as the API base URL. The token must be the current `slrp_...` token shown in the same reviewer's **My AI review workspace** for the intended project. Rotating the token, disabling access, or switching agents invalidates the old token; retrieve the current token from that workspace before configuring it with `/slr config token <TOKEN>`.
 
-Deployment check (2026-10-13): `https://slr-agent.hyperdatalab.org/api/health` responds successfully, and its agent task route responds with `401` when called without an Authorization token. The token supplied during troubleshooting was rejected as invalid or inactive at this host. Use a current token issued by the same deployment; API URL can be saved from chat with `/slr config url https://slr-agent.hyperdatalab.org/api`.
+Deployment check (2026-10-13): `https://slr-agent.hyperdatalab.org/api/health` responds successfully. The current token supplied by the user returned HTTP `200` and assigned tasks at this host, while the same token returned `401 UNAUTHORIZED` at `slr-api.hyperdatalab.org`. The local `default` profile was still pointing at the old `slr-api` host. Open-Science setup now migrates that legacy production URL to `slr-agent`; URL can also be set in chat with `/slr config url https://slr-agent.hyperdatalab.org/api`.
 
 All JSON success responses use this envelope:
 

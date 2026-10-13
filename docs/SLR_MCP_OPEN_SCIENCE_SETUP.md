@@ -187,7 +187,7 @@ Skill bắt buộc hiển thị block `Suggested next actions` sau mọi lệnh 
 
 ## 6. Xử lý lỗi
 
-Deployment check (2026-10-13): `slr-agent.hyperdatalab.org` health check trả `200`; agent task route trả `401` khi không có Authorization token, như kỳ vọng. Token đã gửi trong lần chẩn đoán bị backend này từ chối là invalid/inactive. URL có thể lưu trực tiếp bằng `/slr config url https://slr-agent.hyperdatalab.org/api`; cần token hiện hành do cùng deployment cấp để hoàn tất kết nối.
+Deployment check (2026-10-13): `slr-agent.hyperdatalab.org` health check trả `200`. Token hiện tại do người dùng cung cấp trả `200` và lấy được task tại host này, nhưng trả `401` khi gọi `slr-api.hyperdatalab.org`. Profile `default` trên máy vẫn lưu host cũ `slr-api`; setup mới tự chuyển URL production legacy sang `slr-agent`. Có thể đặt URL trực tiếp bằng `/slr config url https://slr-agent.hyperdatalab.org/api`.
 
 - `401`: API từ chối project token. Production dùng `https://slr-agent.hyperdatalab.org/api`; lấy token `slrp_...` hiện tại từ đúng reviewer/project workspace rồi nhập bằng `/slr config token <TOKEN>`. Rotate token, disable kết nối hoặc đổi agent sẽ làm token cũ mất hiệu lực.
 - `404`: task/paper không còn trong scope; tải lại danh sách.

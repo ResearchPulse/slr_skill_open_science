@@ -29,6 +29,11 @@ An optional separate `slr-config` connector exposes only these local configurati
 - `slr_config_commit`
 - `slr_config_cancel`
 
+The default review connector is named `slr-default`; profiles use `slr-<profileName>`.
+Configuration tools come from the separate `slr-config` connector. When invoking a
+review tool, select the tool exposed by the active profile's review connector; do not
+search for a `host.skills` discovery connector or substitute the config connector.
+
 Use the review tools for task work and the config tools only for `/slr config`. Do not invent bulk, arbitrary-shell, or token tools. `/slr status` uses `connection_test` followed by a bounded task read when task visibility is needed.
 
 ## Commands

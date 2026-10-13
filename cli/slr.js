@@ -96,7 +96,7 @@ function connectorConfig(profile, runtimePackageRoot = resolve(fileURLToPath(new
   if (!profile) throw new Error('no active profile; create or select one first');
   return {
     name: profile.connectorName || `slr-${profile.name}`,
-    displayName: `SLR (${profile.projectName || profile.name})`,
+    displayName: `SLR (${profile.name})`,
     transport: 'stdio',
     command: process.execPath,
     args: connectorRuntimeArgs(runtimePackageRoot, '--mcp', profile.name),
@@ -374,7 +374,7 @@ function registerConnectorDefinition(connector, report, run = openScienceCommand
   let connectorId = existingId;
   let result = run(
     executable,
-    existingId ? ['connector', 'update', existingId, '--json'] : ['connector', 'add', '--json'],
+    existingId ? ['connector', 'update', existingId] : ['connector', 'add', '--json'],
     `${JSON.stringify(connector)}\n`,
   );
   if (result.error || result.status !== 0) {

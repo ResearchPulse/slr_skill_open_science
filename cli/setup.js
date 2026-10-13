@@ -14,7 +14,20 @@ import {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_API_BASE_URL = 'https://slr-agent.hyperdatalab.org/api';
+const LEGACY_PRODUCTION_API_HOST = 'slr-api.hyperdatalab.org';
 const pendingConfigurations = new Map();
+
+function migrateLegacyProductionApiUrl(raw) {
+  if (!raw) return raw;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.hostname.toLowerCase() !== LEGACY_PRODUCTION_API_HOST) return raw;
+    parsed.hostname = 'slr-agent.hyperdatalab.org';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return raw;
+  }
+}
 
 function existingProfile(name, environment) {
   if (!name) return getActiveProfile(environment);
@@ -27,7 +40,7 @@ function existingProfile(name, environment) {
 export async function prepareProfile({ name, apiBaseUrl, environment = globalThis.process['env'] } = {}) {
   const profileName = name || getActiveProfile(environment)?.name || 'default';
   let profile = existingProfile(profileName, environment);
-  const url = apiBaseUrl || profile?.apiBaseUrl || DEFAULT_API_BASE_URL;
+  const url = apiBaseUrl || migrateLegacyProductionApiUrl(profile?.apiBaseUrl) || DEFAULT_API_BASE_URL;
   if (!url) return { profile: null, token: null, skipped: true, reason: 'API URL was not provided' };
 
   profile = profile
@@ -172,7 +185,9 @@ export async function beginTokenConfiguration({ name, apiBaseUrl, token, environ
       throw error;
     }
   })();
-  const candidateUrl = normalizeApiBaseUrl(apiBaseUrl || existing?.apiBaseUrl || DEFAULT_API_BASE_URL);
+  const candidateUrl = normalizeApiBaseUrl(
+    apiBaseUrl || migrateLegacyProductionApiUrl(existing?.apiBaseUrl) || DEFAULT_API_BASE_URL,
+  );
   const candidateToken = String(token || '').trim();
   if (!candidateToken) throw new Error('agent token must not be empty');
 

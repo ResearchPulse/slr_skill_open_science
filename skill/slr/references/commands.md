@@ -119,6 +119,8 @@ If the user uses `/slr config token <TOKEN>`, pass the supplied token only to `s
 
 If the config connector is unavailable, report `CONFIG_CONNECTOR_UNAVAILABLE` and never claim a profile changed without a successful tool result.
 
+The review connector is named `slr-default` for the default profile, or `slr-<profileName>` for another profile. `/slr tasks` invokes `list_assigned_tasks` from that review connector. Do not require a separate `host.skills` discovery tool; if the named review connector's tool is absent from the current session, report that connector as unavailable.
+
 ```text
 SLR profile configured
 Profile: <name>
