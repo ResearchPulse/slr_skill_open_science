@@ -20,7 +20,13 @@ Tools:
   list_drafts()                                       pending drafts table + submitted ids
   get_draft(task_id)                                  one saved draft (exact body)
   submit_drafts(task_ids?)                            POST saved drafts exactly as stored (final)
-  submit_result(task_id, decision, reasoning, data)   POST a vote without a draft (final)
+  submit_result(task_id, decision, reasoning, data)   POST an advisory recommendation
+  get_extraction_context(task_id)                     template, assignment and isolated draft
+  get_extraction_fulltext(task_id)                    normalized Markdown with source coordinates
+  save_extraction_draft(task_id, draft)               save isolated field/evidence draft
+  check_extraction_draft(task_id)                     deterministic PASS/WARN/BLOCK validation
+  submit_extraction_draft(task_id)                    confirmed, challenged pending proposal
+  finalize_extraction_consensus(task_id, proposal)     leader-only challenged consensus proposal
   config_show()                                       profiles, token masked
   config_set_url(url, profile?)                       save API base URL
   config_set_token(token, profile?)                   save token + test (never echoed)
@@ -94,7 +100,8 @@ TOOLS = [
                         "metadata (title, abstract, fullTextStatus). The page also includes the "
                         "current project context."),
         "inputSchema": {**_OBJ, "properties": {
-            "status": {"type": "string", "enum": ["ASSIGNED", "COMPLETED", "any"], "default": "ASSIGNED"}}},
+            "status": {"type": "string", "enum": ["ASSIGNED", "COMPLETED", "any"], "default": "ASSIGNED"},
+            "stage": {"type": "string", "enum": ["TITLE_ABSTRACT", "FULL_TEXT"]}}},
         "annotations": {"readOnlyHint": True},
     },
     {
@@ -121,19 +128,58 @@ TOOLS = [
     },
     {
         "name": "submit_result",
-        "title": "Submit SLR screening vote",
+        "title": "Submit SLR screening recommendation",
         "description": (
-            "Submit the screening recommendation for one assigned paper task. IRREVERSIBLE: the "
-            "API rejects a second submission (409). Only call after the scientist approved this "
-            "exact vote. Returns status submitted / already_completed / error."
+            "Submit an advisory recommendation for one screening task. TITLE_ABSTRACT accepts "
+            "ADVANCE_TO_FULL_TEXT, EXCLUDE or UNCERTAIN; FULL_TEXT accepts INCLUDE, EXCLUDE or "
+            "UNCERTAIN. The result completes only the AI task, never a human vote. Call only after "
+            "the scientist approved this exact recommendation."
         ),
         "inputSchema": {**_OBJ, "properties": {
             **_TASK_ID,
-            "decision": {"type": "string", "description": "INCLUDE, EXCLUDE or UNCERTAIN", "maxLength": 100},
+            "decision": {"type": "string", "description": "Stage-specific advisory recommendation", "maxLength": 100},
             "reasoning": {"type": "string", "description": "Reasoning text (max 16,000 chars)"},
             "data": DATA_SCHEMA},
             "required": ["task_id", "decision", "reasoning", "data"]},
         "annotations": {"destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+    {
+        "name": "get_extraction_context", "title": "Get extraction task context",
+        "description": "Read the assigned extraction task, immutable template snapshot, paper metadata and isolated agent draft.",
+        "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_extraction_fulltext", "title": "Get extraction full text",
+        "description": "Read normalized Markdown, source asset/revision/hash, and paragraph offset coordinates.",
+        "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "save_extraction_draft", "title": "Save isolated extraction draft",
+        "description": "Save the field-value/evidence draft. Include sourceAssetId, sourceRevision, sourceHash, template version and baseVersion from context; evidence quotes must match normalized Markdown offsets and quoteHash. Canonical reviewer data is untouched.",
+        "inputSchema": {**_OBJ, "properties": {**_TASK_ID, "draft": {"type": "object"}},
+                         "required": ["task_id", "draft"]},
+        "annotations": {"idempotentHint": True},
+    },
+    {
+        "name": "check_extraction_draft", "title": "Check extraction draft",
+        "description": "Run deterministic value and evidence checks. Returns versioned PASS, WARN or BLOCK.",
+        "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "submit_extraction_draft", "title": "Submit extraction proposal for human promotion",
+        "description": "After reviewing the draft and a non-blocking check, create a one-time challenge and submit the isolated proposal. Requires one explicit user confirmation. Returns PENDING_HUMAN_PROMOTION; this does not write canonical reviewer records.",
+        "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "name": "finalize_extraction_consensus", "title": "Propose extraction consensus",
+        "description": "Leader-token only. Create or update a challenged consensus proposal; this does not finalize canonical consensus. Requires one explicit user confirmation.",
+        "inputSchema": {**_OBJ, "properties": {**_TASK_ID, "proposal": {"type": "object"}},
+                         "required": ["task_id", "proposal"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     },
     {
         "name": "save_draft",
@@ -237,11 +283,30 @@ def call_tool(name, args):
             res = connection_test()
             return tool_result(res, not res["connected"])
         if name == "list_tasks":
-            project, items = Client().list_tasks(status=args.get("status") or "ASSIGNED")
+            project, items = Client().list_tasks(status=args.get("status") or "ASSIGNED",
+                                                 stage=args.get("stage"))
             return tool_result({"profile": active_profile(), "project": project,
                                 "count": len(items), "items": items})
         if name == "get_task":
             return tool_result(Client().get_task(str(args["task_id"])))
+        if name == "get_extraction_context":
+            return tool_result(Client().extraction_request("GET", str(args["task_id"]), "context"))
+        if name == "get_extraction_fulltext":
+            return tool_result(Client().extraction_request("GET", str(args["task_id"]), "fulltext"))
+        if name == "save_extraction_draft":
+            return tool_result(Client().extraction_request("PUT", str(args["task_id"]), "draft",
+                                                           args["draft"]))
+        if name == "check_extraction_draft":
+            return tool_result(Client().extraction_request("POST", str(args["task_id"]), "check", {}))
+        if name == "submit_extraction_draft":
+            result = Client().submit_extraction_proposal(str(args["task_id"]))
+            return tool_result({"taskId": str(args["task_id"]), "status": "PENDING_HUMAN_PROMOTION",
+                                "proposal": result})
+        if name == "finalize_extraction_consensus":
+            result = Client().submit_extraction_proposal(str(args["task_id"]), consensus=True,
+                                                          proposal=args["proposal"])
+            return tool_result({"taskId": str(args["task_id"]), "status": "CONSENSUS_PROPOSAL",
+                                "proposal": result})
         if name == "get_markdown":
             tid = str(args["task_id"])
             try:
@@ -260,12 +325,30 @@ def call_tool(name, args):
             body = build_body(args.get("decision"), args.get("reasoning"), args.get("data"))
             tid = str(args["task_id"])
             try:
+                refreshed = Client().get_task(tid)
+                task_info = refreshed.get("task") or refreshed
+                task_kind = task_info.get("taskKind")
+                if task_kind != "screening":
+                    code = "EXTRACTION_TASK_REQUIRED" if task_kind == "extraction" else "TASK_KIND_REQUIRED"
+                    raise ApiError(409, code,
+                                   "This task is not explicitly identified as a screening task.")
+                stage = task_info.get("stage") or "FULL_TEXT"
+                decision = body["decision"].upper()
+                body["decision"] = decision
+                if stage == "TITLE_ABSTRACT" and decision == "INCLUDE":
+                    decision = "ADVANCE_TO_FULL_TEXT"
+                    body["decision"] = decision
+                allowed = ({"ADVANCE_TO_FULL_TEXT", "EXCLUDE", "UNCERTAIN"}
+                           if stage == "TITLE_ABSTRACT" else {"INCLUDE", "EXCLUDE", "UNCERTAIN"})
+                if decision not in allowed:
+                    raise ApiError(None, "VALIDATION",
+                                   f"Decision {decision} is not allowed for {stage}; allowed: {', '.join(sorted(allowed))}.")
                 task = Client().submit(tid, body)
                 mark_submitted(tid, "submitted")
                 return tool_result({"taskId": tid, "status": "submitted", "decision": body["decision"],
                                     "taskStatus": (task or {}).get("status")})
             except ApiError as e:
-                if e.status == 409:
+                if e.exit_code == slr.EXIT_CONFLICT:
                     mark_submitted(tid, "already_completed")
                     return tool_result({"taskId": tid, "status": "already_completed", "message": e.message})
                 raise
@@ -308,10 +391,12 @@ def handle(msg):
             "protocolVersion": ver,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
-            "instructions": ("Connector for the /slr skill (systematic literature review screening). "
-                             "Use it for every SLR API call, /slr config and the drafts (save_draft, "
-                             "list_drafts, get_draft). submit_drafts / submit_result only for votes the "
-                             "scientist approved. Never repeat the agent token."),
+            "instructions": ("Connector for /slr screening and extraction. Screening results are "
+                             "advisory recommendations and never human votes. Extraction proposals "
+                             "remain isolated until human promotion; consensus proposal writes require "
+                             "the leader capability and never finalize canonical consensus. "
+                             "submit_drafts / submit_result and extraction proposal writes require "
+                             "explicit user approval. Never repeat the agent token."),
         }}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}

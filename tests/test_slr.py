@@ -39,7 +39,7 @@ CLAUDE_VOTE = {
 
 
 def _task(tid, stage, status="ASSIGNED"):
-    t = {"id": tid, "stage": stage, "status": status, "paperTitle": f"Paper {tid}",
+    t = {"id": tid, "stage": stage, "taskKind": "screening", "status": status, "paperTitle": f"Paper {tid}",
          "instructions": "Assess criteria.",
          "protocolSnapshot": {"inclusionCriteria": ["Adults"], "exclusionCriteria": ["Reviews"]},
          "paper": {"id": f"p-{tid}", "title": f"Paper {tid}", "abstract": "...", "fullTextStatus": "COMPLETED"}}
@@ -51,6 +51,11 @@ def _task(tid, stage, status="ASSIGNED"):
 class FakeApi(BaseHTTPRequestHandler):
     tasks = {}
     posts = []
+    extraction_drafts = {}
+    extraction_posts = []
+    list_stages = []
+    check_status = "PASS"
+    inactive = set()
 
     def log_message(self, *a):
         pass
@@ -77,6 +82,12 @@ class FakeApi(BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         ids = sorted(self.tasks)
         if path == "/api/agent/v1/tasks":
+            params = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
+            stage = params.get("stage")
+            self.list_stages.append(stage)
+            if stage:
+                ids = [tid for tid in ids if self.tasks[tid].get("stage") == stage
+                       and self.tasks[tid].get("taskKind") == "screening"]
             # one item per page, to exercise the cursor loop; cursor = "c<offset>"
             start = int(query.split("cursor=c")[1].split("&")[0]) if "cursor=c" in query else 0
             items = [self.tasks[i] for i in ids[start:start + 1]]
@@ -84,6 +95,18 @@ class FakeApi(BaseHTTPRequestHandler):
             return self._send(200, {"success": True, "data": {
                 "project": {"name": "Demo review"}, "items": items,
                 "nextCursor": f"c{start + 1}" if more else None, "hasMore": more}})
+        if path.startswith("/api/agent/v1/extraction/tasks/"):
+            parts = path.strip("/").split("/")
+            tid, action = parts[5], parts[6]
+            if tid not in self.tasks:
+                return self._send(404, {"success": False, "error": {"code": "NOT_FOUND", "message": "no task"}})
+            if action == "context":
+                return self._send(200, {"success": True, "data": {"task": self.tasks[tid],
+                                 "template": {"version": "v1"}, "draft": self.extraction_drafts.get(tid)}})
+            if action == "fulltext":
+                return self._send(200, {"success": True, "data": {"markdown": "Adults 18-65.",
+                                 "sourceAssetId": "asset-1", "sourceRevision": 3,
+                                 "sourceHash": "sha256:abc", "paragraphs": [{"startOffset": 0, "endOffset": 13}]}})
         parts = path.strip("/").split("/")  # api agent v1 tasks <id> [markdown]
         tid = parts[4] if len(parts) > 4 else None
         if tid not in self.tasks:
@@ -92,18 +115,50 @@ class FakeApi(BaseHTTPRequestHandler):
             return self._send(200, {"success": True, "data": {"task": self.tasks[tid]}})
         if tid == "t-pending":
             return self._send(202, {"success": True, "data": {"status": "PROCESSING"}}, headers={"Retry-After": "10"})
+        if tid == "t-error502":
+            return self._send(502, {"success": False, "error": {"code": "ASSET_READ_FAILED", "message": "asset unavailable"}})
         return self._send(200, "# Methods\nAdults 18-65.", "text/markdown; charset=utf-8")
 
     def do_POST(self):
         if not self._auth():
             return
-        tid = self.path.strip("/").split("/")[4]
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        path = self.path.split("?", 1)[0]
+        if "/extraction/tasks/" in path:
+            parts = path.strip("/").split("/")
+            tid, action = parts[5], parts[6]
+            self.extraction_posts.append((tid, action, body))
+            if action == "check":
+                check = {"version": 1, "status": self.check_status}
+                if self.check_status == "BLOCK":
+                    check = {"check": check}
+                return self._send(200, {"success": True, "data": check})
+            if action in ("submit-challenge", "consensus-challenge"):
+                return self._send(200, {"success": True, "data": {"challengeId": f"challenge-{action}"}})
+            if action in ("submit", "consensus-proposal"):
+                if not body.get("challengeId"):
+                    return self._send(400, {"success": False, "error": {"code": "CHALLENGE_REQUIRED", "message": "challenge required"}})
+                return self._send(200, {"success": True, "data": {"status": "PENDING_HUMAN_PROMOTION", "proposalId": "proposal-1"}})
+            return self._send(404, {"success": False, "error": {"code": "NOT_FOUND", "message": "unknown extraction action"}})
+        tid = path.strip("/").split("/")[4]
         if self.tasks[tid]["status"] == "COMPLETED":
             return self._send(409, {"success": False, "error": {"code": "TASK_COMPLETED", "message": "done"}})
+        if tid in self.inactive:
+            return self._send(409, {"success": False, "error": {"code": "TASK_STAGE_INACTIVE", "message": "stage moved"}})
         self.posts.append((tid, body))
         self.tasks[tid]["status"] = "COMPLETED"
         return self._send(200, {"success": True, "data": self.tasks[tid]})
+
+    def do_PUT(self):
+        if not self._auth():
+            return
+        path = self.path.split("?", 1)[0]
+        parts = path.strip("/").split("/")
+        tid, action = parts[5], parts[6]
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.extraction_drafts[tid] = body
+        self.extraction_posts.append((tid, action, body))
+        return self._send(200, {"success": True, "data": {"draft": body}})
 
 
 class McpEndToEnd(unittest.TestCase):
@@ -119,8 +174,15 @@ class McpEndToEnd(unittest.TestCase):
 
     def setUp(self):
         FakeApi.tasks = {t["id"]: t for t in (_task("t-ta", "TITLE_ABSTRACT"), _task("t-ft", "FULL_TEXT"),
-                                              _task("t-pending", "FULL_TEXT"))}
+                                              _task("t-pending", "FULL_TEXT"), _task("t-extract", "FULL_TEXT"),
+                                              _task("t-ta2", "TITLE_ABSTRACT"), _task("t-error502", "FULL_TEXT"))}
+        FakeApi.tasks["t-extract"]["taskKind"] = "extraction"
         FakeApi.posts = []
+        FakeApi.extraction_posts = []
+        FakeApi.extraction_drafts = {}
+        FakeApi.list_stages = []
+        FakeApi.check_status = "PASS"
+        FakeApi.inactive = set()
         self.tmp = tempfile.TemporaryDirectory()
         self.env = {k: v for k, v in os.environ.items()
                     if k not in ("API_BASE_URL", "AGENT_TOKEN", "AGENT_TOKEN_FILE", "REVIEW_PROFILE")}
@@ -153,6 +215,8 @@ class McpEndToEnd(unittest.TestCase):
                            capture_output=True, text=True, encoding="utf-8")
         names = {t["name"] for t in json.loads(p.stdout)["result"]["tools"]}
         self.assertEqual(names, {"connection_test", "list_tasks", "get_task", "get_markdown", "submit_result",
+                                 "get_extraction_context", "get_extraction_fulltext", "save_extraction_draft",
+                                 "check_extraction_draft", "submit_extraction_draft", "finalize_extraction_consensus",
                                  "save_draft", "list_drafts", "get_draft", "submit_drafts",
                                  "config_show", "config_set_url", "config_set_token", "config_use"})
 
@@ -179,9 +243,17 @@ class McpEndToEnd(unittest.TestCase):
     def test_list_follows_cursor_and_counts(self):
         self.configure()
         ct, lst = self.mcp(("connection_test", {}), ("list_tasks", {}))
-        self.assertEqual(ct["structuredContent"]["assigned"], 3)
+        self.assertEqual(ct["structuredContent"]["assigned"], 6)
         self.assertEqual(ct["structuredContent"]["project"], "Demo review")
-        self.assertEqual(lst["structuredContent"]["count"], 3)
+        self.assertEqual(lst["structuredContent"]["count"], 6)
+
+    def test_stage_filter_is_sent_on_each_cursor_page(self):
+        self.configure()
+        FakeApi.list_stages = []
+        (listed,) = self.mcp(("list_tasks", {"stage": "TITLE_ABSTRACT"}),)
+        self.assertEqual(listed["structuredContent"]["count"], 2)
+        self.assertTrue(FakeApi.list_stages)
+        self.assertEqual(set(FakeApi.list_stages), {"TITLE_ABSTRACT"})
 
     def test_markdown_stage_guard_pending_and_ready(self):
         self.configure()
@@ -194,6 +266,15 @@ class McpEndToEnd(unittest.TestCase):
         self.assertEqual(ft["structuredContent"]["status"], "ready")
         self.assertIn("Adults 18-65", ft["content"][0]["text"])
 
+    def test_not_found_and_asset_gateway_errors_are_preserved(self):
+        self.configure()
+        missing, gateway = self.mcp(("get_task", {"task_id": "missing"}),
+                                    ("get_markdown", {"task_id": "t-error502"}))
+        self.assertTrue(missing["isError"])
+        self.assertEqual(missing["structuredContent"]["httpStatus"], 404)
+        self.assertTrue(gateway["isError"])
+        self.assertEqual(gateway["structuredContent"]["httpStatus"], 502)
+
     def test_submit_once_then_already_completed(self):
         self.configure()
         vote = {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "Key reason: adults.", "data": DATA}
@@ -203,6 +284,15 @@ class McpEndToEnd(unittest.TestCase):
         self.assertEqual(second["structuredContent"]["status"], "already_completed")
         self.assertEqual(task["structuredContent"]["task"]["status"], "COMPLETED")
         self.assertEqual(len(FakeApi.posts), 1)
+
+    def test_stage_inactive_conflict_is_not_reported_as_completed(self):
+        self.configure()
+        FakeApi.inactive = {"t-ta"}
+        (res,) = self.mcp(("submit_result", {"task_id": "t-ta", "decision": "EXCLUDE",
+                                               "reasoning": "rationale", "data": DATA}))
+        self.assertTrue(res["isError"])
+        self.assertEqual(res["structuredContent"]["code"], "TASK_STAGE_INACTIVE")
+        self.assertEqual(FakeApi.tasks["t-ta"]["status"], "ASSIGNED")
 
     def test_submit_validation_blocks_post(self):
         self.configure()
@@ -215,7 +305,76 @@ class McpEndToEnd(unittest.TestCase):
         self.configure()
         (res,) = self.mcp(("submit_result", {"task_id": "t-ta", **CLAUDE_VOTE}))
         self.assertEqual(res["structuredContent"]["status"], "submitted")
-        self.assertEqual(FakeApi.posts, [("t-ta", {k: CLAUDE_VOTE[k] for k in ("decision", "reasoning", "data")})])
+        self.assertEqual(FakeApi.posts, [("t-ta", {"decision": "ADVANCE_TO_FULL_TEXT",
+                                                   "reasoning": CLAUDE_VOTE["reasoning"],
+                                                   "data": CLAUDE_VOTE["data"]})])
+
+    def test_stage_decision_rules_and_advisory_alias(self):
+        self.configure()
+        bad, good, fulltext_bad = self.mcp(
+            ("submit_result", {"task_id": "t-ta", "decision": "INCLUDE", "reasoning": "x", "data": DATA}),
+            ("submit_result", {"task_id": "t-ta", "decision": "ADVANCE_TO_FULL_TEXT", "reasoning": "x", "data": DATA}),
+            ("submit_result", {"task_id": "t-ft", "decision": "ADVANCE_TO_FULL_TEXT", "reasoning": "x", "data": DATA}))
+        self.assertEqual(bad["structuredContent"]["status"], "submitted")
+        self.assertEqual(good["structuredContent"]["status"], "already_completed")
+        self.assertTrue(fulltext_bad["isError"])
+        self.assertEqual(FakeApi.posts[0][1]["decision"], "ADVANCE_TO_FULL_TEXT")
+        self.assertEqual(len(FakeApi.posts), 1)
+
+    def test_screening_submit_refuses_extraction_task(self):
+        self.configure()
+        (res,) = self.mcp(("submit_result", {"task_id": "t-extract", "decision": "INCLUDE",
+                                               "reasoning": "rationale", "data": DATA}))
+        self.assertTrue(res["isError"])
+        self.assertEqual(res["structuredContent"]["code"], "EXTRACTION_TASK_REQUIRED")
+        self.assertEqual(FakeApi.posts, [])
+
+    def test_missing_task_kind_is_never_assumed_to_be_screening(self):
+        self.configure()
+        unknown = _task("t-unknown-kind", "TITLE_ABSTRACT")
+        unknown.pop("taskKind")
+        FakeApi.tasks[unknown["id"]] = unknown
+        (res,) = self.mcp(("submit_result", {"task_id": unknown["id"], "decision": "EXCLUDE",
+                                               "reasoning": "rationale", "data": DATA}))
+        self.assertTrue(res["isError"])
+        self.assertEqual(res["structuredContent"]["code"], "TASK_KIND_REQUIRED")
+        self.assertEqual(FakeApi.posts, [])
+
+    def test_extraction_tools_and_challenge_handshake(self):
+        self.configure()
+        draft = {"fields": [{"fieldId": "f1", "value": "Adults"}], "sourceAssetId": "asset-1",
+                 "sourceRevision": 3, "sourceHash": "sha256:abc", "templateVersion": "v1", "baseVersion": 2}
+        context, text, saved, checked, submitted = self.mcp(
+            ("get_extraction_context", {"task_id": "t-extract"}),
+            ("get_extraction_fulltext", {"task_id": "t-extract"}),
+            ("save_extraction_draft", {"task_id": "t-extract", "draft": draft}),
+            ("check_extraction_draft", {"task_id": "t-extract"}),
+            ("submit_extraction_draft", {"task_id": "t-extract"}))
+        self.assertEqual(context["structuredContent"]["template"]["version"], "v1")
+        self.assertEqual(text["structuredContent"]["sourceHash"], "sha256:abc")
+        self.assertEqual(saved["structuredContent"]["draft"], draft)
+        self.assertEqual(checked["structuredContent"]["status"], "PASS")
+        self.assertEqual(submitted["structuredContent"]["status"], "PENDING_HUMAN_PROMOTION")
+        submit_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "submit")
+        self.assertEqual(submit_post[2], {"challengeId": "challenge-submit-challenge"})
+
+        proposal = {"fields": [{"fieldId": "f1", "value": "Adults"}], "confidence": 0.9}
+        (consensus,) = self.mcp(("finalize_extraction_consensus", {"task_id": "t-extract",
+                                                                     "proposal": proposal}))
+        self.assertEqual(consensus["structuredContent"]["status"], "CONSENSUS_PROPOSAL")
+        challenge_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "consensus-challenge")
+        self.assertEqual(challenge_post[2], {"proposal": proposal})
+        consensus_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "consensus-proposal")
+        self.assertEqual(consensus_post[2], {"challengeId": "challenge-consensus-challenge",
+                                             "proposal": proposal})
+
+    def test_blocked_extraction_draft_never_challenges(self):
+        self.configure()
+        FakeApi.check_status = "BLOCK"
+        (res,) = self.mcp(("submit_extraction_draft", {"task_id": "t-extract"}))
+        self.assertTrue(res["isError"])
+        self.assertEqual(res["structuredContent"]["code"], "EXTRACTION_CHECK_BLOCKED")
+        self.assertFalse(any(action == "submit-challenge" for _, action, _ in FakeApi.extraction_posts))
 
     def test_submit_without_criteria_is_rejected(self):
         # Regression: votes with data = {confidence, stage} showed no "Criteria assessment" in the web app.

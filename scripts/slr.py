@@ -272,16 +272,20 @@ class Client:
         return payload["data"]
 
     # --- endpoints
-    def list_page(self, limit=50, cursor=None):
+    def list_page(self, limit=50, cursor=None, stage=None):
         q = {"limit": max(1, min(100, limit))}
         if cursor:
             q["cursor"] = cursor
+        if stage:
+            if stage not in ("TITLE_ABSTRACT", "FULL_TEXT"):
+                raise ApiError(None, "VALIDATION", "stage must be TITLE_ABSTRACT or FULL_TEXT.")
+            q["stage"] = stage
         return self._get_json("/agent/v1/tasks?" + urllib.parse.urlencode(q))
 
-    def list_tasks(self, status="ASSIGNED", limit=100):
+    def list_tasks(self, status="ASSIGNED", limit=100, stage=None):
         items, project, cursor = [], None, None
         while True:
-            page = self.list_page(limit, cursor)
+            page = self.list_page(limit, cursor, stage)
             project = project or page.get("project")
             items.extend(page.get("items", []))
             cursor = page.get("nextCursor")
@@ -331,7 +335,79 @@ class Client:
         status, _, raw = self._request("POST", path, body=body)
         if status == 200:
             return json.loads(raw.decode("utf-8")).get("data")
-        self._raise(status, raw, EXIT_CONFLICT if status == 409 else EXIT_ERROR)
+        try:
+            code = (json.loads(raw.decode("utf-8")).get("error") or {}).get("code")
+        except Exception:
+            code = None
+        completed = code in {"TASK_COMPLETED", "TASK_ALREADY_COMPLETED", "ALREADY_COMPLETED"}
+        if status == 409 and not completed:
+            try:
+                current = self.get_task(task_id)
+                current_task = current.get("task") or current
+                completed = current_task.get("status") == "COMPLETED"
+            except ApiError:
+                completed = False
+        self._raise(status, raw, EXIT_CONFLICT if status == 409 and completed else EXIT_ERROR)
+
+    def extraction_request(self, method, task_id, action, body=None):
+        path = f"/agent/v1/extraction/tasks/{urllib.parse.quote(task_id)}/{action}"
+        status, _, raw = self._request(method, path, body=body)
+        if status not in (200, 201, 202):
+            self._raise(status, raw, EXIT_CONFLICT if status == 409 else EXIT_ERROR)
+        if not raw:
+            return {}
+        payload = json.loads(raw.decode("utf-8"))
+        if not payload.get("success"):
+            raise ApiError(status, "BAD_RESPONSE", "Unexpected response envelope.")
+        return payload.get("data")
+
+    @staticmethod
+    def _challenge_id(payload):
+        if isinstance(payload, dict):
+            for key in ("challengeId", "challenge_id", "challengeToken", "token"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    return value
+            for key in ("challenge", "data"):
+                found = Client._challenge_id(payload.get(key))
+                if found:
+                    return found
+        return None
+
+    @staticmethod
+    def _extraction_check_status(payload):
+        if isinstance(payload, dict):
+            status = payload.get("status")
+            if status in {"PASS", "WARN", "BLOCK"}:
+                return status
+            for value in payload.values():
+                status = Client._extraction_check_status(value)
+                if status:
+                    return status
+        elif isinstance(payload, list):
+            for value in payload:
+                status = Client._extraction_check_status(value)
+                if status:
+                    return status
+        return None
+
+    def submit_extraction_proposal(self, task_id, consensus=False, proposal=None):
+        if not consensus:
+            check = self.extraction_request("POST", task_id, "check", {})
+            if self._extraction_check_status(check) == "BLOCK":
+                raise ApiError(None, "EXTRACTION_CHECK_BLOCKED",
+                               "The current extraction draft has a BLOCK check and cannot be proposed.")
+        challenge_action = "consensus-challenge" if consensus else "submit-challenge"
+        submit_action = "consensus-proposal" if consensus else "submit"
+        challenge_body = {"proposal": proposal or {}} if consensus else {}
+        challenge = self.extraction_request("POST", task_id, challenge_action, challenge_body)
+        challenge_id = self._challenge_id(challenge)
+        if not challenge_id:
+            raise ApiError(None, "BAD_RESPONSE", "Challenge response did not include a challenge identifier.")
+        body = {"challengeId": challenge_id}
+        if consensus:
+            body["proposal"] = proposal or {}
+        return self.extraction_request("POST", task_id, submit_action, body)
 
 
 # ------------------------------------------------------------------ audit log
