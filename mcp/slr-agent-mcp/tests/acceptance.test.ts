@@ -250,11 +250,12 @@ describe('SLR MCP acceptance harness', () => {
     expect(detailResult.isError).not.toBe(true);
     expect(JSON.stringify(detailResult)).toContain(paper.title);
 
-    const pendingResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: { taskId } });
+    const fullTextArguments = { taskId, stage: 'FULL_TEXT' as const, markdownPath: '/papers/acceptance.md' };
+    const pendingResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: fullTextArguments });
     expect(pendingResult.isError).not.toBe(true);
     expect(JSON.stringify(pendingResult)).toContain('retryAfterSeconds');
 
-    const fullTextResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: { taskId } });
+    const fullTextResult = await connectedClient.callTool({ name: 'get_task_fulltext', arguments: fullTextArguments });
     expect(fullTextResult.isError).not.toBe(true);
     expect(JSON.stringify(fullTextResult)).toContain('full text is ready');
 

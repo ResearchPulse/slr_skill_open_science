@@ -460,6 +460,7 @@ export function registerConfigConnector(
   ensureDaemon = ensureOpenScienceDaemon,
   runtimePackageRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
 ) {
+  if (!credentialId) return { registered: false, reason: 'credential-binding-missing' };
   return registerConnectorDefinition(configConnectorConfig(credentialId, runtimePackageRoot), report, run, ensureDaemon);
 }
 

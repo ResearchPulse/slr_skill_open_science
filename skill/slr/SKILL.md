@@ -81,6 +81,8 @@ After every successful command, finish with a visible `Suggested next actions` b
 - After `cancel`, report that nothing was submitted and suggest `/slr task <taskId>` or `/slr tasks` if the user wants to choose another paper.
 - After a successful extraction submission: suggest `/slr tasks`; if the draft check is `BLOCK`, fix the draft and rerun `/slr extract <taskId>`.
 
+For a `FULL_TEXT` task whose Markdown is unavailable, the next action must explicitly say `upload the PDF` in the SLR web application before retrying the task. When Markdown is available, label the branch `Full text available` and suggest `/slr review <taskId>`.
+
 ## Claude-compatible command surface
 
 Keep Claude and Open-Science command names interchangeable. These are workflow
@@ -137,7 +139,7 @@ The skill cannot install packages or change Open-Science connector settings as p
 
 ## Token input rule
 
-There is one project token. The SLR API uses it to identify the agent/project and scope task access. The user may provide it directly in chat with `/slr config token <TOKEN>`; pass it to `slr_config_token` without asking them to use a terminal or manually configure connector credentials. Open-Science's encrypted Credential field `SLR_AGENT_TOKEN` is populated automatically after API validation; it is not another token. Do not unnecessarily repeat the token in replies or save it in logs, profile metadata, connector JSON, drafts, or results. The API base URL is configured separately with `/slr config url <URL>` and does not require a token.
+There is one project token. The SLR API uses it to identify the agent/project and scope task access. The user may provide it directly in chat with `/slr config token <TOKEN>`; pass it to `slr_config_token` without asking them to use a terminal or hidden prompt. Open-Science's encrypted Credential field `SLR_AGENT_TOKEN` is populated automatically after API validation and stores/supplies that same value; it is not another token. Never repeat, display, summarize, log, persist in profile metadata, connector JSON, drafts, or results. The config connector must validate it before binding; if that fails, no profile activation is claimed. The API base URL is configured separately with `/slr config url <URL>` and does not require a token.
 
 Submission from `/slr submit` and `/slr auto` is still the same final,
 confirmation-gated MCP operation; these commands do not create a second write path.

@@ -172,9 +172,9 @@ After `/slr task <taskId>`, always show a visible `Suggested next actions` block
 ```text
 Suggested next actions:
 - TITLE_ABSTRACT: /slr review <taskId> using title and abstract
-- FULL_TEXT with Markdown available: /slr review <taskId>
+- Full text available: /slr review <taskId>
 - FULL_TEXT processing: retry after <retryAfterSeconds> seconds
-- FULL_TEXT unavailable: upload the paper PDF, then retry /slr task <taskId>
+- Full text unavailable: upload the paper PDF, then retry /slr task <taskId>
 ```
 
 Render only the branch that matches the task stage and returned status. For FULL_TEXT, call `get_task_fulltext` only if `stage` is `FULL_TEXT` and `markdownPath` is present; pass the exact returned values. Never construct a Markdown URL or retry `409 FULLTEXT_STAGE_REQUIRED`.
