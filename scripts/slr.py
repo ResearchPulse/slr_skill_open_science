@@ -149,7 +149,7 @@ def workdir():
 # ------------------------------------------------------------------ validation
 
 CRITERION_STATUSES = ("met", "not_met", "unclear")
-BASES = ("title_abstract", "full_text", "partial_full_text")
+BASES = ("title_abstract", "full_text")
 
 
 def validate_data(data):
@@ -203,6 +203,42 @@ def build_body(decision, reasoning, data=None):
     size =len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
     if size > MAX_BODY_BYTES:
         raise ApiError(None, "VALIDATION", f"body is {size} bytes; max {MAX_BODY_BYTES}.")
+    return body
+
+
+def validate_task_result(task_response, body):
+    """Reject stage-incompatible screening results before sending the POST."""
+    task = task_response.get("task") or task_response
+    stage = task.get("stage") or (task.get("reviewPolicy") or {}).get("stage") or "FULL_TEXT"
+    if stage not in ("TITLE_ABSTRACT", "FULL_TEXT"):
+        raise ApiError(None, "BAD_RESPONSE", f"Task returned unsupported screening stage: {stage}.")
+
+    task_kind = task.get("taskKind")
+    if task_kind != "screening":
+        code = "EXTRACTION_TASK_REQUIRED" if task_kind == "extraction" else "TASK_KIND_REQUIRED"
+        raise ApiError(409, code, "This task is not explicitly identified as a screening task.")
+
+    decision = str(body.get("decision") or "").strip().upper()
+    allowed = ({"ADVANCE_TO_FULL_TEXT", "EXCLUDE", "UNCERTAIN"}
+               if stage == "TITLE_ABSTRACT" else {"INCLUDE", "EXCLUDE", "UNCERTAIN"})
+    if decision not in allowed:
+        raise ApiError(None, "VALIDATION",
+                       f"Decision {decision or '(empty)'} is not allowed for {stage}; "
+                       f"allowed: {', '.join(sorted(allowed))}.")
+    body["decision"] = decision
+
+    if stage == "FULL_TEXT":
+        paper = task_response.get("paper") or task.get("paper") or {}
+        source_status = paper.get("fullTextStatus") or task.get("fullTextStatus")
+        if source_status in {"PENDING", "PROCESSING", "PARTIAL"}:
+            raise ApiError(409, "FULLTEXT_UNAVAILABLE",
+                           f"Full-text source is {source_status}; wait for a COMPLETED source revision.")
+        if source_status in {"FAILED", "UNAVAILABLE"} and decision != "UNCERTAIN":
+            raise ApiError(None, "VALIDATION",
+                           f"Only UNCERTAIN is allowed when full-text source is {source_status}.")
+        if source_status != "COMPLETED" and source_status not in {"FAILED", "UNAVAILABLE"}:
+            raise ApiError(None, "BAD_RESPONSE",
+                           "FULL_TEXT task is missing a recognized paper.fullTextStatus.")
     return body
 
 
@@ -572,13 +608,14 @@ def mark_submitted(task_id, result, via="mcp", error=None):
 
 
 def submit_drafts(ids=None):
-    """POST saved drafts exactly as stored; move each accepted one to submitted/. Stops on 401."""
+    """Refresh and validate each task before POST; move accepted drafts to submitted/. Stop on 401."""
     c = Client()
     results = []
     for d in _load_drafts(set(ids) if ids else None):
         tid = d["taskId"]
         try:
             body = build_body(d["body"].get("decision"), d["body"].get("reasoning"), d["body"].get("data"))
+            validate_task_result(c.get_task(tid), body)
             c.submit(tid, body)
             res = {"taskId": tid, "result": "submitted", "decision": body["decision"]}
         except ApiError as e:
@@ -623,7 +660,9 @@ def cmd_submit(args):
     if args.dry_run:
         _out({"ok": True, "dryRun": True, "body": body})
         return
-    task = Client().submit(args.task_id, body)
+    client = Client()
+    validate_task_result(client.get_task(args.task_id), body)
+    task = client.submit(args.task_id, body)
     log_event({"event": "submit", "taskId": args.task_id, "result": "submitted",
                "decision": body["decision"]})
     _out({"ok": True, "task": task})

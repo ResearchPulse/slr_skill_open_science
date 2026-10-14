@@ -66,7 +66,7 @@ Create task body:
 }
 ```
 
-`stage` is `TITLE_ABSTRACT` or `FULL_TEXT` (default `TITLE_ABSTRACT`), and `taskKind` is `screening` or `extraction` (default `screening`). A screening task at `FULL_TEXT` can be created only when the paper status is `SCREENING_FULL_TEXT`, meaning both Title & Abstract votes passed it to full-text eligibility (or a leader resolved it into that stage), and an attached PDF exists. Otherwise the API returns `409 FULLTEXT_STAGE_NOT_READY`, `FULLTEXT_NOT_AVAILABLE`, or `FULLTEXT_UNAVAILABLE`. Extraction that is pending or processing is allowed; the agent receives `202` and `Retry-After` when it requests Markdown. `TITLE_ABSTRACT` tasks use only the title and abstract. Extraction tasks must set `taskKind: "extraction"` explicitly; they are created only for an `INCLUDED` paper assigned to the reviewer with a canonical extraction template snapshot. A task stores its reviewer owner, stage, kind, and a snapshot of the project's research questions and eligibility criteria at assignment time. Reviewers can only assign papers in their human assignment list. Completed tasks cannot be removed.
+`stage` is `TITLE_ABSTRACT` or `FULL_TEXT` (default `TITLE_ABSTRACT`), and `taskKind` is `screening` or `extraction` (default `screening`). A screening task at `TITLE_ABSTRACT` uses the paper title, abstract, and known keywords metadata; missing keywords remain unknown. A screening task at `FULL_TEXT` can be created only when the paper status is `SCREENING_FULL_TEXT`, meaning both Title & Abstract votes passed it to full-text eligibility (or a leader resolved it into that stage), and an attached PDF exists. Pending or processing extraction may be assigned so the agent can wait for Markdown. If extraction is marked `COMPLETED`, the source must have `fullText.status: "COMPLETED"` and a valid project-owned Markdown asset; `PARTIAL` or unavailable content returns `409 FULLTEXT_UNAVAILABLE`. Otherwise the API returns `409 FULLTEXT_STAGE_NOT_READY`, `FULLTEXT_NOT_AVAILABLE`, or `FULLTEXT_UNAVAILABLE`. Extraction tasks must set `taskKind: "extraction"` explicitly; they are created only for an `INCLUDED` paper assigned to the reviewer with a canonical extraction template snapshot. A task stores its reviewer owner, stage, kind, and a snapshot of the project's research questions and eligibility criteria at assignment time. Reviewers can only assign papers in their human assignment list. Completed tasks cannot be removed.
 
 Agent access management and task creation through former owner-facing `/api/projects/{projectId}/agents` mutations are disabled. Project Leaders continue to assign papers to Human Reviewers and can monitor AI task progress.
 
@@ -122,7 +122,7 @@ Response shape:
           "consensusEligible": false,
           "humanDecisionRequired": true,
           "stage": "TITLE_ABSTRACT",
-          "scope": "Assess title and abstract only. ADVANCE_TO_FULL_TEXT means the paper needs full-text eligibility review; it is not final inclusion.",
+          "scope": "Assess only the title, abstract, and paper.keywords when present. If keywords is null, treat it as unavailable and never infer keywords. Use only evidence in these fields; missing information or silence in the abstract is unclear, not not_met. Recommend EXCLUDE only when the available metadata clearly proves an exclusion criterion or failure of an inclusion criterion. If evidence is insufficient and there is no clear exclusion basis, use UNCERTAIN. ADVANCE_TO_FULL_TEXT requests full-text review and is not final inclusion.",
           "allowedRecommendations": ["ADVANCE_TO_FULL_TEXT", "EXCLUDE", "UNCERTAIN"]
         },
         "paperTitle": "Paper title",
@@ -141,6 +141,7 @@ Response shape:
           "id": "paper-id",
           "title": "Paper title",
           "abstract": "Paper abstract",
+          "keywords": ["keyword one", "keyword two"],
           "authors": [{ "name": "Author Name" }],
           "doi": "10.1234/example",
           "year": 2024,
@@ -156,7 +157,11 @@ Response shape:
 }
 ```
 
-`project` contains current review context once per page. Each item contains its task-time `protocolSnapshot`, instructions, and a bibliographic summary so the agent does not need one metadata request per task. The snapshot is authoritative if the protocol changes after assignment. Screening items include `reviewPolicy` with `role: "ADVISORY_ONLY"`, `consensusEligible: false`, `humanDecisionRequired: true`, stage-specific scope, and `allowedRecommendations`. At `TITLE_ABSTRACT`, allowed recommendations are `ADVANCE_TO_FULL_TEXT`, `EXCLUDE`, and `UNCERTAIN`; advancing only requests the next review round and is not final inclusion. At `FULL_TEXT`, allowed recommendations are `INCLUDE`, `EXCLUDE`, and `UNCERTAIN`. For compatibility, stage-less legacy screening tasks are normalized to `FULL_TEXT` in the response; their `reviewPolicy.stage` and `stage` agree, and they may include `markdownPath`. **Only request Markdown when the task has `stage: "FULL_TEXT"` and includes `markdownPath`.** For title/abstract tasks, do not construct or call the Markdown URL; a `409 FULLTEXT_STAGE_REQUIRED` is an expected stage restriction and should not be retried. `paper.authors` may contain strings or objects with a `name` field. `paper.fullTextStatus` reflects the current extraction status; it may be `PENDING`, `PROCESSING`, `COMPLETED`, `PARTIAL`, `FAILED`, or `UNAVAILABLE` depending on the paper record.
+`project` contains current review context once per page. Each item contains its task-time `protocolSnapshot`, instructions, and a bibliographic summary so the agent does not need one metadata request per task. The snapshot is authoritative if the protocol changes after assignment. Screening items include `reviewPolicy` with `role: "ADVISORY_ONLY"`, `consensusEligible: false`, `humanDecisionRequired: true`, stage-specific scope, and `allowedRecommendations`. At `TITLE_ABSTRACT`, allowed recommendations are `ADVANCE_TO_FULL_TEXT`, `EXCLUDE`, and `UNCERTAIN`; advancing only requests the next review round and is not final inclusion. Insufficient summary evidence is `unclear`, not `not_met`; do not exclude because a keyword or abstract detail is missing. At `FULL_TEXT`, allowed recommendations are `INCLUDE`, `EXCLUDE`, and `UNCERTAIN`; only a completed full-text source can support a conclusion. For compatibility, stage-less legacy screening tasks are normalized to `FULL_TEXT` in the response; their `reviewPolicy.stage` and `stage` agree, and they may include `markdownPath`. **Only request Markdown when the task has `stage: "FULL_TEXT"` and includes `markdownPath`.** For title/abstract tasks, do not construct or call the Markdown URL; a `409 FULLTEXT_STAGE_REQUIRED` is an expected stage restriction and should not be retried. `paper.authors` may contain strings or objects with a `name` field. `paper.fullTextStatus` reflects the current extraction status; it may be `PENDING`, `PROCESSING`, `COMPLETED`, `PARTIAL`, `FAILED`, or `UNAVAILABLE` depending on the paper record.
+
+`paper.keywords` is present on every screening task returned by this list endpoint. It is either an array of strings or `null`. Existing structured paper records may store keywords as an array or as a comma/semicolon-delimited string; the API trims entries and splits delimited strings into an array. Blank or missing data returns `null`. The backend reads the existing `projects/{projectId}/papers/{paperId}.keywords` field; it does not infer keywords from title or abstract. The current Paper model and importers do not guarantee that field is populated. GROBID can extract keywords from PDFs, but currently writes them only into the full-text Markdown asset, not the structured Paper field used here. Therefore many existing and newly imported papers may return `null` until ingestion persists keywords as structured paper metadata.
+
+For a `FULL_TEXT` task, `reviewPolicy.scope` states that the agent must assess the completed full-text Markdown against all inclusion and exclusion criteria, recommend `INCLUDE` only when evidence adequately satisfies the inclusion criteria and no exclusion criterion applies, and recommend `EXCLUDE` only when full-text evidence clearly establishes an exclusion criterion or failure of an inclusion criterion. It directs the agent to use `UNCERTAIN` for missing or ambiguous evidence or a failed/unavailable source, wait for `Retry-After` while extraction is pending or processing, and wait without submitting a conclusion when the source is `PARTIAL`. Its `allowedRecommendations` are exactly `INCLUDE`, `EXCLUDE`, and `UNCERTAIN`.
 
 Task `status` is `ASSIGNED` until a result is accepted, then `COMPLETED`. A completed task may also contain `completedAt` and `result`.
 
@@ -170,6 +175,26 @@ GET /api/agent/v1/tasks/{taskId}
 
 This returns `{ "task": ..., "project": ..., "paper": ... }` inside `data`. Use it to refresh an individual task or retrieve its review context. Screening tasks include the same stage-specific `reviewPolicy` as the task list. The task must be assigned to this token's agent, reviewer workspace, and project; otherwise the API returns `404`. If an assigned task is still pending after its paper has moved to another stage, the API returns `409 TASK_STAGE_INACTIVE`; completed tasks remain readable as history. Use the task's `protocolSnapshot` as the criteria of record for this analysis.
 
+The detail endpoint includes the same `paper.keywords` field and normalization as the task list:
+
+```json
+{
+  "success": true,
+  "data": {
+    "task": { "id": "task-id", "stage": "TITLE_ABSTRACT" },
+    "project": { "id": "project-id", "name": "Example review" },
+    "paper": {
+      "id": "paper-id",
+      "title": "Paper title",
+      "abstract": "Paper abstract",
+      "keywords": ["keyword one", "keyword two"]
+    }
+  }
+}
+```
+
+When no structured keywords are available, both list and detail responses return `"keywords": null` (never `[]` to mean unknown). For example: `"keywords": null`.
+
 ## 5. Retrieve full-text Markdown
 
 ```http
@@ -180,13 +205,13 @@ On success, the body is the paper's Markdown (`Content-Type: text/markdown; char
 
 | HTTP status | Meaning |
 | --- | --- |
-| `200` | Markdown is ready for a `FULL_TEXT` task; response body is Markdown text |
+| `200` | Markdown is ready for a `FULL_TEXT` task with `fullText.status: "COMPLETED"`; response body is Markdown text |
 | `202` | GROBID extraction is pending for a `FULL_TEXT` task; response includes `Retry-After: 10` and a JSON status envelope |
 | `404` | Task, assigned paper, or PDF does not exist for this token |
-| `409` | Task stage is inactive (`TASK_STAGE_INACTIVE`), task is not at `FULL_TEXT` stage (`FULLTEXT_STAGE_REQUIRED`), or Markdown is unavailable/extraction failed (`FULLTEXT_UNAVAILABLE`) |
+| `409` | Task stage is inactive (`TASK_STAGE_INACTIVE`), task is not at `FULL_TEXT` stage (`FULLTEXT_STAGE_REQUIRED`), or Markdown is `PARTIAL`, unavailable, or extraction failed (`FULLTEXT_UNAVAILABLE`) |
 | `502` | Backend could not retrieve the Markdown asset |
 
-When a response is `202`, wait at least the number of seconds in `Retry-After` before trying again. Do not repeatedly poll faster than that. `PARTIAL` Markdown is not extractable; wait for a `COMPLETED` source revision.
+When a response is `202`, wait at least the number of seconds in `Retry-After` before trying again. Do not repeatedly poll faster than that. The API does not serve `PARTIAL` Markdown: it returns `409 FULLTEXT_UNAVAILABLE`. Do not make a decision from a partial source; wait until task metadata reports a `COMPLETED` source revision, then request Markdown again. A failed or unavailable source also returns `409 FULLTEXT_UNAVAILABLE`; submit `UNCERTAIN` with a reason describing the source state. If the PDF itself is absent, the endpoint returns `404`.
 
 ## 6. Submit an AI recommendation
 
@@ -209,14 +234,34 @@ Request body:
 }
 ```
 
-`decision` is a required non-empty string (maximum 100 characters), validated against the task stage:
+`decision` is a required non-empty string (maximum 100 characters), validated against the task stage. Submit one of these canonical recommendations:
 
 | Task stage | Accepted decisions | Interpretation |
 | --- | --- | --- |
-| `TITLE_ABSTRACT` | `ADVANCE_TO_FULL_TEXT`, `EXCLUDE`, `UNCERTAIN` | Recommend whether the assigned reviewer should advance the paper for full-text assessment. Legacy `INCLUDE` is accepted as an alias and normalized to `ADVANCE_TO_FULL_TEXT`. |
+| `TITLE_ABSTRACT` | `ADVANCE_TO_FULL_TEXT`, `EXCLUDE`, `UNCERTAIN` | Recommend whether the assigned reviewer should advance the paper for full-text assessment. `ADVANCE_TO_FULL_TEXT` is not a final inclusion decision. |
 | `FULL_TEXT` | `INCLUDE`, `EXCLUDE`, `UNCERTAIN` | Recommend the final full-text eligibility outcome. |
 
-Other stage/decision combinations return `400`. `reasoning` is required (maximum 16,000 characters) and serves as the agent's explanation. `data` is optional and must be a JSON object; use it for criterion assessments and evidence. The complete normalized result must not exceed 30 KB. A successful saved result is tagged with `kind: "ADVISORY_RECOMMENDATION"`, its `stage`, and `consensusEligible: false`. Submitting this result completes only the AI task: it does not create a human screening decision, change paper status, or create a Human-vs-Human conflict. Each of the two assigned Human Reviewers must still submit their own vote; AI results never count toward reviewer quorum or leader conflict resolution.
+Other stage/decision combinations return `400`. In particular, `INCLUDE` is rejected for `TITLE_ABSTRACT` and `ADVANCE_TO_FULL_TEXT` is rejected for `FULL_TEXT`; there is no legacy Round 1 `INCLUDE` alias. For `FULL_TEXT`, result submission while extraction is `PENDING` or `PROCESSING` returns `409 FULLTEXT_PROCESSING`. A `PARTIAL` source returns `409 FULLTEXT_UNAVAILABLE` for result submission, including `UNCERTAIN`; wait for a `COMPLETED` source revision. If full text is `FAILED` or otherwise unavailable, only `UNCERTAIN` can be submitted. `reasoning` is required (maximum 16,000 characters) and serves as the agent's explanation. `data` is optional and must be a JSON object; use it for criterion assessments and evidence. The complete normalized result must not exceed 30 KB. A successful saved result is tagged with `kind: "ADVISORY_RECOMMENDATION"`, its `stage`, and `consensusEligible: false`. Submitting this result completes only the AI task: it does not create a human screening decision, change paper status, or create a Human-vs-Human conflict. Each of the two assigned Human Reviewers must still submit their own vote; AI results never count toward reviewer quorum or leader conflict resolution.
+
+Round 1 example:
+
+```json
+{
+  "decision": "ADVANCE_TO_FULL_TEXT",
+  "reasoning": "The available title, abstract, and keywords support further full-text review; this is not final inclusion.",
+  "data": { "criteria": [{ "criterion": "IC1", "assessment": "unclear", "evidence": "The abstract does not report the required detail." }] }
+}
+```
+
+Round 2 example:
+
+```json
+{
+  "decision": "INCLUDE",
+  "reasoning": "The completed full text provides evidence for all inclusion criteria and no exclusion criterion applies.",
+  "data": { "criteria": [{ "criterion": "IC1", "assessment": "met", "evidence": "Full-text evidence with a section reference." }] }
+}
+```
 
 Successful submission returns HTTP `200`, the updated task, and sets its status to `COMPLETED`. A completed task cannot be submitted again; the API returns `409`.
 
@@ -256,7 +301,7 @@ The Open-Science adapter exposes `get_extraction_context`, `get_extraction_fullt
 | `400` | Invalid `limit`, cursor, or result body |
 | `401` | Missing, malformed, rotated, or inactive token. Copy the current reviewer workspace token and update the MCP connection. |
 | `404` | Task does not exist or is outside the token's agent/project scope |
-| `409` | Task already completed, task stage is no longer active (`TASK_STAGE_INACTIVE`), Full Text task created before eligibility (`FULLTEXT_STAGE_NOT_READY`), PDF missing (`FULLTEXT_NOT_AVAILABLE`), wrong task kind, or full-text content unavailable |
+| `409` | Task already completed, task stage is no longer active (`TASK_STAGE_INACTIVE`), Full Text task created before eligibility (`FULLTEXT_STAGE_NOT_READY`), result submitted while extraction is pending (`FULLTEXT_PROCESSING`), PDF missing (`FULLTEXT_NOT_AVAILABLE`), wrong task kind, or full-text content partial/unavailable (`FULLTEXT_UNAVAILABLE`) |
 | `500` | Unexpected backend error; retry with backoff |
 | `502` | Backend could not read a paper asset |
 
@@ -264,8 +309,8 @@ The Open-Science adapter exposes `get_extraction_context`, `get_extraction_fullt
 
 1. Request a task page for a single stage (`stage=TITLE_ABSTRACT` or `stage=FULL_TEXT`) and retain `nextCursor` for pagination. Call separately for each round so one round's cursor cannot mix with the other.
 2. Process only tasks with `status: "ASSIGNED"` and follow `reviewPolicy.scope` and `allowedRecommendations`.
-3. At `TITLE_ABSTRACT`, assess only title and abstract and return `ADVANCE_TO_FULL_TEXT`, `EXCLUDE`, or `UNCERTAIN`. Do not call the Markdown endpoint or describe an advance recommendation as final inclusion.
-4. At `FULL_TEXT`, fetch `markdownPath` to read the paper. If extraction is pending or processing, the endpoint returns `202`; wait for `Retry-After` and retry. If `paper.fullTextStatus` is `FAILED` or `UNAVAILABLE`, submit `UNCERTAIN` with a clear explanation and `data.fullTextAvailability` so the task is closed without pretending the full text was reviewed. Otherwise use `INCLUDE`, `EXCLUDE`, or `UNCERTAIN` based on the paper.
+3. At `TITLE_ABSTRACT`, assess only title, abstract, and keywords when present. Treat `paper.keywords: null` as missing data; never infer keywords. Mark a criterion `unclear` when the summary is insufficient. Missing abstract detail is not evidence for `not_met`; exclude only with clear evidence. Return `ADVANCE_TO_FULL_TEXT`, `EXCLUDE`, or `UNCERTAIN`. Do not call the Markdown endpoint or describe an advance recommendation as final inclusion.
+4. At `FULL_TEXT`, fetch `markdownPath` only for a `FULL_TEXT` task that includes it. If extraction is `PENDING` or `PROCESSING`, the endpoint returns `202`; wait for `Retry-After` and retry. Do not assess or submit a result against `PARTIAL` Markdown; wait for a `COMPLETED` source revision. Only recommend `INCLUDE` when full-text evidence supports all inclusion criteria and no exclusion criterion applies; recommend `EXCLUDE` only with clear full-text evidence. For missing or ambiguous evidence in a completed source, or `FAILED`/`UNAVAILABLE` full text, submit `UNCERTAIN` with a clear explanation and `data.fullTextAvailability` so the task is closed without pretending the full text was reviewed. Otherwise use `INCLUDE`, `EXCLUDE`, or `UNCERTAIN` based on the completed source.
 5. Include criterion-level evidence in `data` and a concise rationale in `reasoning`. Submit one recommendation for each completed task. Human reviewers still make and submit the official votes; agents never count toward quorum.
 
 Swagger UI is available at `/api-docs`; the OpenAPI JSON is at `/api-docs.json`.

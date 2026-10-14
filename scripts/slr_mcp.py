@@ -19,7 +19,7 @@ Tools:
   save_draft(task_id, decision, reasoning, data, title?)  validate + save/replace a local draft
   list_drafts()                                       pending drafts table + submitted ids
   get_draft(task_id)                                  one saved draft (exact body)
-  submit_drafts(task_ids?)                            POST saved drafts exactly as stored (final)
+  submit_drafts(task_ids?)                            revalidate stage/source, then POST approved drafts
   submit_result(task_id, decision, reasoning, data)   POST an advisory recommendation
   get_extraction_context(task_id)                     template, assignment and isolated draft
   get_extraction_fulltext(task_id)                    normalized Markdown with source coordinates
@@ -57,12 +57,14 @@ _PROFILE = {"profile": {"type": "string", "description": "Profile name; default 
 # Mirrors slr.validate_data; data.criteria feeds the web app's "Criteria assessment" panel.
 DATA_SCHEMA = {
     "type": "object",
-    "description": ("Structured assessment. criteria must cover every inclusion (IC1…) and exclusion "
+    "description": ("Structured assessment. For TITLE_ABSTRACT, use title, abstract and known "
+                    "paper.keywords; null keywords are unavailable and must not be inferred or "
+                    "treated as an exclusion. criteria must cover every inclusion (IC1…) and exclusion "
                     "(EC1…) criterion of the task's protocolSnapshot, in API order. Also include studyDesign, "
                     "population, intervention, comparator, outcomes, exclusionTriggered and evidence "
                     "(see 'Vote format' in the /slr skill)."),
     "properties": {
-        "basis": {"type": "string", "enum": ["title_abstract", "full_text", "partial_full_text"]},
+        "basis": {"type": "string", "enum": ["title_abstract", "full_text"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "criteria": {
             "type": "array", "minItems": 1,
@@ -96,8 +98,9 @@ TOOLS = [
         "name": "list_tasks",
         "title": "List SLR tasks",
         "description": ("List tasks assigned to this reviewer workspace's agent (all cursor pages), "
-                        "including each task's stage, instructions, protocolSnapshot and paper "
-                        "metadata (title, abstract, fullTextStatus). The page also includes the "
+                        "including stage, instructions, protocolSnapshot and paper metadata "
+                        "(title, abstract, keywords, fullTextStatus). Keywords are an array or "
+                        "null when unavailable; never infer missing keywords. The page also includes the "
                         "current project context."),
         "inputSchema": {**_OBJ, "properties": {
             "status": {"type": "string", "enum": ["ASSIGNED", "COMPLETED", "any"], "default": "ASSIGNED"},
@@ -108,6 +111,7 @@ TOOLS = [
         "name": "get_task",
         "title": "Get SLR task",
         "description": ("Return one task with stage, protocolSnapshot, markdownPath, paper metadata "
+                        "including keywords as an array or null when unavailable, "
                         "and result. Use it to refresh a task or verify a submission landed "
                         "(status COMPLETED)."),
         "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
@@ -191,7 +195,10 @@ TOOLS = [
         "inputSchema": {**_OBJ, "properties": {
             **_TASK_ID,
             "title": {"type": "string", "description": "Short paper title for the drafts table"},
-            "decision": {"type": "string", "description": "INCLUDE, EXCLUDE or UNCERTAIN", "maxLength": 100},
+            "decision": {"type": "string",
+                         "description": ("TITLE_ABSTRACT: ADVANCE_TO_FULL_TEXT, EXCLUDE or UNCERTAIN; "
+                                         "FULL_TEXT: INCLUDE, EXCLUDE or UNCERTAIN"),
+                         "maxLength": 100},
             "reasoning": {"type": "string", "description": "Reasoning text (max 16,000 chars)"},
             "data": DATA_SCHEMA},
             "required": ["task_id", "decision", "reasoning", "data"]},
@@ -215,7 +222,8 @@ TOOLS = [
     {
         "name": "submit_drafts",
         "title": "Submit approved SLR drafts",
-        "description": ("POST saved drafts exactly as stored and move each accepted one to submitted. "
+        "description": ("Refresh each task and validate stage-specific decision and source status before POST; "
+                        "move each accepted draft to submitted. "
                         "IRREVERSIBLE. Only call after the scientist explicitly approved these drafts. "
                         "task_ids = the approved ids (omit only when every pending draft was approved). "
                         "Stops the batch on 401. Per task: submitted / already_completed / error."),
@@ -326,23 +334,7 @@ def call_tool(name, args):
             tid = str(args["task_id"])
             try:
                 refreshed = Client().get_task(tid)
-                task_info = refreshed.get("task") or refreshed
-                task_kind = task_info.get("taskKind")
-                if task_kind != "screening":
-                    code = "EXTRACTION_TASK_REQUIRED" if task_kind == "extraction" else "TASK_KIND_REQUIRED"
-                    raise ApiError(409, code,
-                                   "This task is not explicitly identified as a screening task.")
-                stage = task_info.get("stage") or "FULL_TEXT"
-                decision = body["decision"].upper()
-                body["decision"] = decision
-                if stage == "TITLE_ABSTRACT" and decision == "INCLUDE":
-                    decision = "ADVANCE_TO_FULL_TEXT"
-                    body["decision"] = decision
-                allowed = ({"ADVANCE_TO_FULL_TEXT", "EXCLUDE", "UNCERTAIN"}
-                           if stage == "TITLE_ABSTRACT" else {"INCLUDE", "EXCLUDE", "UNCERTAIN"})
-                if decision not in allowed:
-                    raise ApiError(None, "VALIDATION",
-                                   f"Decision {decision} is not allowed for {stage}; allowed: {', '.join(sorted(allowed))}.")
+                slr.validate_task_result(refreshed, body)
                 task = Client().submit(tid, body)
                 mark_submitted(tid, "submitted")
                 return tool_result({"taskId": tid, "status": "submitted", "decision": body["decision"],

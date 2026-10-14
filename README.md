@@ -158,7 +158,7 @@ khác hay chạy script trong thư mục skill. Vì vậy:
 Skill tuân theo [AI_AGENT_TASK_API_CONTRACT.md](AI_AGENT_TASK_API_CONTRACT.md): token gắn với agent +
 project + reviewer workspace; danh sách task lấy qua cursor; mỗi task chấm theo `protocolSnapshot`.
 Chỉ lấy Markdown khi task có `stage: FULL_TEXT` và có `markdownPath` (tool tự kiểm tra stage);
-`202` tuân theo `Retry-After`; Markdown `PARTIAL` dùng được nhưng phải ghi rõ mức bao phủ. Kết quả agent
+`202` tuân theo `Retry-After`; Markdown `PARTIAL` chưa dùng để review, cần đợi source revision `COMPLETED`. Round 1 dùng title, abstract và keywords nếu có; `keywords: null` không phải lý do loại bài. Kết quả agent
 là **recommendation**, chỉ hoàn tất AI task — không tạo screening decision của reviewer.
 
 ---
