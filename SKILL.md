@@ -97,6 +97,12 @@ Keep only relevant source identity, template, or validation details inside the c
 own overview, extracted-values, evidence, or validation table. The allowed output is one paper's
 overview table, extracted-values table, evidence table, and validation table at a time.
 
+For `/slr consensus`, render one primary comparison table per paper containing every custom
+field, R1 value, R2 value, agent decision, recommended value, reason, and the available evidence
+summary. Do not render the standalone second check table (`Field ID | Result | Message`); include
+the relevant check outcome inline in the comparison row instead. This presentation rule does not
+allow omitting the underlying evidence or the agent's field-level reason.
+
 For every `/slr review`, render these tables before the concluding prose:
 
 1. Task/source metadata: profile, project, server host, task id, paper, task kind, stage,
@@ -354,15 +360,21 @@ another reviewer's submission.
 2. Call `analyze_extraction_consensus` for the selected leader task. If the result is
    `WAITING_FOR_REVIEWERS`, show a table naming each missing reviewer and stop. Do not create a
    draft or call a write tool.
-3. When `READY`, compare every custom template field separately. Show one complete table bundle for
+3. Treat `analyze_extraction_consensus` as a conservative server-side baseline, not the final
+   decision. Inspect every custom field's R1 value, R2 value, and both reviewers' evidence; do not
+   resolve a disagreement by raw string comparison, whitespace/case normalization, or a title-only
+   heuristic. The agent must perform the semantic/evidence comparison and write its own field-level
+   status, recommended value, and reason into the `analysis` payload. Show one complete table bundle for
    this paper containing field id/name/section/required, R1 value, R2 value, recommended value,
    comparison status, reason, value/evidence checks, and the complete evidence rows (quote,
    offsets, section/paragraph/PDF page, source revision). Do not collapse this behind a follow-up.
-4. For an exact match use `AGREE`. If values differ but have the same meaning and the evidence
-   supports that interpretation, the agent may propose `SEMANTIC_AGREE` with a reason and
-   recommended value. A substantive difference is `CONFLICT`; explain the field-level reason and
-   leave that finding `PENDING`. `MISSING` is used when a reviewer omitted a value; a required
-   missing field blocks official consensus.
+4. For an exact same value use `AGREE`. If values differ in wording or formatting but the source
+   evidence proves the same meaning, use `SEMANTIC_AGREE`, select a source-supported recommended
+   value, and explain why. A line break, harmless formatting variation, equivalent terminology,
+   or another non-substantive difference in any custom field is not by itself a conflict. Compare
+   both values and their evidence with the source paper. A substantive difference is `CONFLICT`;
+   explain the field-level reason and leave that finding `PENDING`. `MISSING` is used when a
+   reviewer omitted a value; a required missing field blocks official consensus.
 5. After explicit approval, call `save_extraction_consensus_draft` with every template field,
    findings, and the full `analysis`. The backend rechecks reviewer submission versions, template
    snapshot, Cloudinary full-text revision/hash, values, and evidence before saving.

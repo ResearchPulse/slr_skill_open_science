@@ -249,7 +249,11 @@ function ensureDaemon(exe) {
 function connectorRecords(json) {
   if (Array.isArray(json)) return json;
   if (json && typeof json === 'object') {
-    for (const k of ['connectors', 'items', 'data', 'servers', 'customServers']) {
+    // Open-Science returns built-in catalog connectors under `connectors` and
+    // user-managed stdio connectors under `customServers`. Prefer the latter
+    // so install/update/remove can see the existing `slr` connector and clean
+    // legacy `slr-*` registrations instead of attempting a duplicate add.
+    for (const k of ['customServers', 'items', 'data', 'servers', 'connectors']) {
       if (Array.isArray(json[k])) return json[k];
     }
   }
