@@ -1,6 +1,6 @@
 ---
 name: slr
-description: Systematic literature review agent using the `slr` MCP connector. Screens assigned tasks with stage-specific advisory recommendations, or prepares isolated extraction proposals for human promotion. Also configures the API server URL and agent token. Use for /slr or when asked to process assigned review tasks.
+description: Systematic literature review agent using the `slr` MCP connector. Screens assigned tasks with stage-specific advisory recommendations, or submits reviewer-scoped extraction drafts directly after evidence/value checks and explicit approval. Also configures the API server URL and agent token. Use for /slr or when asked to process assigned review tasks.
 argument-hint: "[setup | status | list | review [N or ids] | drafts | edit ID | submit [ids] | auto [N] | config ... | mcp | help]"
 ---
 
@@ -29,7 +29,7 @@ the saved profile, and the drafts folder.
 | `submit_result` | send one advisory recommendation without a draft; only for `/slr auto` fallback |
 | `get_extraction_context` · `get_extraction_fulltext` | read extraction assignment, template and normalized paper source |
 | `save_extraction_draft` · `check_extraction_draft` | save an isolated proposal and run evidence/value checks |
-| `submit_extraction_draft` | create a challenged proposal for human promotion; one explicit confirmation |
+| `submit_extraction_draft` | submit a checked reviewer extraction directly to canonical reviewer data; one explicit confirmation |
 | `finalize_extraction_consensus` | leader-only consensus proposal; never finalizes canonical consensus |
 | `config_show` · `config_set_url` · `config_set_token` · `config_use` | profiles, URL, token |
 
@@ -64,6 +64,72 @@ Several projects: one profile each (`--profile <name>` on `config url` / `config
 switch with `/slr config use <name>`). Switches and new tokens work immediately — no
 reconnect. Drafts are kept per profile. Always state which profile/project you're on before
 reviewing or submitting.
+
+## Mandatory full-table output (non-negotiable)
+
+Every user-facing response for every `/slr` command MUST include Markdown table(s) rendered
+inline in the response, with the complete available information. A prose-only summary is
+invalid, even when the tool response is short, the task has no draft, or all checks pass.
+Never hide details behind "view", "show", a collapsed tool result, or a follow-up request
+unless the user explicitly asks for a brief summary. Always render the tables automatically;
+do not wait for the user to ask to see them.
+This rule overrides any compact-output wording in the command table above.
+
+For every `/slr review`, render these tables before the concluding prose:
+
+1. Task/source metadata: profile, project, server host, task id, paper, task kind, stage,
+   task status, full-text status, template id/version, draft version, and submission state.
+2. Extraction fields: one row for every custom template field, including section, field id,
+   field name, required flag, expected type/shape, actual value, and evidence count. Include
+   a row with `—` when a field has no value.
+3. Evidence: one row for every evidence item, including field id, exact quote, source asset,
+   source revision/hash, quote hash, start/end offsets, section, paragraph, and PDF page.
+4. Checks: one row for every value/evidence validation check or issue, including code, field,
+   result (`PASS`, `WARN`, or `BLOCK`), and exact message.
+
+For extraction tasks, the compact paper-level table `Paper | Extracted finding | Check` is
+forbidden as the only output. Do not claim that templates or evidence were reviewed unless
+the field, evidence, and check rows are visible in the response. Repeat the complete table
+bundle for each task, or use one combined table with a `task id` column; never collapse two
+or more tasks into one finding sentence per paper.
+
+For screening review, replace the extraction-fields table with one criterion row per
+inclusion/exclusion criterion and still show the task/source, evidence, checks, and submit
+state tables. If a table has no rows, render its headers and a `—` row instead of omitting it.
+
+- `status`, `list`, and `drafts`: include one complete row per task or draft with profile,
+  project, server host, task/draft id, paper title, task kind, stage, status, full-text
+  status, draft/check status, decision, and reason where available.
+- Screening review: include task/paper/stage, decision, confidence, reasoning, every
+  criterion id and text, criterion result, exact supporting quote, section/page/offset, and
+  draft/submission state. Use one row per criterion when needed.
+- Extraction review: always include a field table with section, field id/name, required,
+  value, and evidence count, plus an evidence table with field id, exact quote,
+  sourceAssetId, sourceRevision, sourceHash, start/end offsets, paragraph/page, and
+  quoteHash. Also include check status and every validation issue.
+- `/slr review` MUST use the extraction template returned by `get_extraction_context` for
+  the current assignment. Never replace custom fields with a preset or a hard-coded field
+  list. For every extraction task, show these tables even when the draft is already present:
+  (1) task/source/template metadata, (2) one row per template field and its value, (3) one
+  row per evidence item, and (4) one row per evidence/value check or validation issue.
+- Value checks must show: check code, field id, field name, required flag, expected type or
+  shape, actual value, result (`PASS`, `WARN`, or `BLOCK`), and the exact validation message.
+  Include template id/version, draft version, expected version, source revision, and source
+  hash checks when the API returns them. Do not claim a check passed when the API did not
+  return that result; use `—`.
+- Evidence checks must show: check code, field id, exact quote, source asset id, source
+  revision, source hash, quote hash, start/end offsets, section, paragraph, PDF page,
+  result, and exact validation message. Explicitly show checks for field membership,
+  quote-to-source matching, offset bounds, quote hash, source identity/revision/hash, and
+  required-field evidence coverage when available.
+- For screening tasks in `/slr review`, show one criterion row per inclusion/exclusion
+  criterion with criterion id/text, result, decision, confidence, reasoning, exact quote,
+  source location, and draft state. A paper-level summary table alone is not sufficient.
+- Submit and finalize: show the exact pre-submit payload summary and a result table with
+  task id, submission/proposal id, status, draft version, evidence count, canonical-record
+  state, and human-finalize requirement.
+- Use `—` for unavailable values and split wide output into multiple tables when necessary,
+  but never omit available rows or columns. Redact tokens and other secrets.
 
 ## Token handling
 
@@ -248,10 +314,54 @@ whether a vote landed, `get_task`: `COMPLETED` = it did; never post twice.
 For extraction tasks (`taskKind: extraction`), use only the extraction tools. Read context and
 normalized full text, save the source-bound field/evidence draft, then run its deterministic
 check. Do not submit while the check is `BLOCK`. After the user approves once, call
-`submit_extraction_draft`; the connector performs the one-time backend challenge and returns
-`PENDING_HUMAN_PROMOTION`. This proposal does not update canonical reviewer data. The web
-workflow's human promotion is the only canonical writer. Consensus proposal writes require a
-separately provisioned leader token; `finalize_extraction_consensus` does not finalize consensus.
+`submit_extraction_draft`; the connector performs the one-time backend challenge and writes the
+reviewer-scoped canonical extraction record, returning `SUBMITTED`. The extraction queue reflects
+the submitted reviewer record immediately; this is not final consensus. Consensus proposal writes
+require a separately provisioned leader token; `finalize_extraction_consensus` does not finalize
+consensus.
+
+### Extraction draft payload (required)
+
+After `get_extraction_context` and `get_extraction_fulltext`, use the exact field IDs and
+template snapshot returned by the context. Save one canonical draft with this shape:
+
+```json
+{
+  "templateId": "<context.assignment.templateId>",
+  "templateVersion": 1,
+  "sourceAssetId": "<fulltext.sourceAssetId>",
+  "sourceRevision": "<fulltext.sourceRevision>",
+  "sourceHash": "<fulltext.sourceHash, 64 hex characters>",
+  "expectedVersion": 0,
+  "values": {
+    "<fieldId>": { "stringValue": "<answer>" }
+  },
+  "evidence": [
+    {
+      "fieldId": "<fieldId>",
+      "sourceAssetId": "<fulltext.sourceAssetId>",
+      "sourceRevision": "<fulltext.sourceRevision>",
+      "sourceHash": "<fulltext.sourceHash>",
+      "startOffset": 123,
+      "endOffset": 150,
+      "quote": "<exact substring of normalized Markdown>",
+      "quoteHash": "<SHA-256 hex of quote>"
+    }
+  ]
+}
+```
+
+Rules: `templateVersion` is numeric; `expectedVersion` is the isolated draft version from
+context, or `0` when no draft exists. Copy source metadata exactly from full text. Offsets are
+zero-based positions in normalized Markdown, `endOffset` is exclusive, and `quoteHash` is the
+SHA-256 hex digest of the exact quote. `values` is an object keyed by the template's exact field
+IDs and `evidence` is an array. Use `{ "isNotReported": true }` for a required value that the
+paper does not report. Send `evidence: []` when there is no defensible evidence, then let the
+deterministic check return its result. Do not use the legacy `fields` list, `templateVersion: "v1"`,
+`baseVersion`, or evidence strings in the canonical payload.
+
+Call `check_extraction_draft` after saving. Only submit when the check is not `BLOCK`; a
+non-blocking `WARN` still requires the scientist's approval before `submit_extraction_draft`.
 
 The installer (`npx github:ResearchPulse/slr_skill_open_science`) registers and enables a
 local custom connector named `slr` through the `open-science` CLI. If the tools are missing

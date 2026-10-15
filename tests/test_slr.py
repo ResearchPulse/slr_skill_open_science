@@ -134,7 +134,10 @@ class FakeApi(BaseHTTPRequestHandler):
                     check = {"check": check}
                 return self._send(200, {"success": True, "data": check})
             if action in ("submit-challenge", "consensus-challenge"):
-                return self._send(200, {"success": True, "data": {"challengeId": f"challenge-{action}"}})
+                return self._send(200, {"success": True, "data": {
+                    "challengeId": f"challenge-{action}",
+                    "payloadDigest": "d" * 64,
+                }})
             if action in ("submit", "consensus-proposal"):
                 if not body.get("challengeId"):
                     return self._send(400, {"success": False, "error": {"code": "CHALLENGE_REQUIRED", "message": "challenge required"}})
@@ -213,12 +216,18 @@ class McpEndToEnd(unittest.TestCase):
         p = subprocess.run([sys.executable, str(SCRIPTS / "slr_mcp.py")], env=self.env, timeout=60,
                            input='{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
                            capture_output=True, text=True, encoding="utf-8")
-        names = {t["name"] for t in json.loads(p.stdout)["result"]["tools"]}
+        tools = json.loads(p.stdout)["result"]["tools"]
+        names = {t["name"] for t in tools}
         self.assertEqual(names, {"connection_test", "list_tasks", "get_task", "get_markdown", "submit_result",
                                  "get_extraction_context", "get_extraction_fulltext", "save_extraction_draft",
                                  "check_extraction_draft", "submit_extraction_draft", "finalize_extraction_consensus",
                                  "save_draft", "list_drafts", "get_draft", "submit_drafts",
                                  "config_show", "config_set_url", "config_set_token", "config_use"})
+        extraction = next(t for t in tools if t["name"] == "save_extraction_draft")
+        draft = extraction["inputSchema"]["properties"]["draft"]
+        self.assertEqual(draft["required"], ["templateId", "templateVersion", "sourceAssetId", "sourceRevision",
+                                              "sourceHash", "expectedVersion", "values", "evidence"])
+        self.assertNotIn("fields", draft["properties"])
 
     def test_unconfigured_reports_config_error(self):
         (res,) = self.mcp(("connection_test", {}))
@@ -342,8 +351,9 @@ class McpEndToEnd(unittest.TestCase):
 
     def test_extraction_tools_and_challenge_handshake(self):
         self.configure()
-        draft = {"fields": [{"fieldId": "f1", "value": "Adults"}], "sourceAssetId": "asset-1",
-                 "sourceRevision": 3, "sourceHash": "sha256:abc", "templateVersion": "v1", "baseVersion": 2}
+        draft = {"templateId": "template-1", "templateVersion": 1, "sourceAssetId": "asset-1",
+                 "sourceRevision": "3", "sourceHash": "a" * 64, "expectedVersion": 0,
+                 "values": {"f1": {"stringValue": "Adults"}}, "evidence": []}
         context, text, saved, checked, submitted = self.mcp(
             ("get_extraction_context", {"task_id": "t-extract"}),
             ("get_extraction_fulltext", {"task_id": "t-extract"}),
@@ -356,7 +366,11 @@ class McpEndToEnd(unittest.TestCase):
         self.assertEqual(checked["structuredContent"]["status"], "PASS")
         self.assertEqual(submitted["structuredContent"]["status"], "PENDING_HUMAN_PROMOTION")
         submit_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "submit")
-        self.assertEqual(submit_post[2], {"challengeId": "challenge-submit-challenge"})
+        self.assertEqual(submit_post[2], {
+            "challengeId": "challenge-submit-challenge",
+            "payloadDigest": "d" * 64,
+            "idempotencyKey": "mcp-extraction-t-extract-" + "d" * 64,
+        })
 
         proposal = {"fields": [{"fieldId": "f1", "value": "Adults"}], "confidence": 0.9}
         (consensus,) = self.mcp(("finalize_extraction_consensus", {"task_id": "t-extract",
@@ -365,8 +379,11 @@ class McpEndToEnd(unittest.TestCase):
         challenge_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "consensus-challenge")
         self.assertEqual(challenge_post[2], {"proposal": proposal})
         consensus_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "consensus-proposal")
-        self.assertEqual(consensus_post[2], {"challengeId": "challenge-consensus-challenge",
-                                             "proposal": proposal})
+        self.assertEqual(consensus_post[2], {
+            "challengeId": "challenge-consensus-challenge",
+            "payloadDigest": "d" * 64,
+            "idempotencyKey": "mcp-consensus-t-extract-" + "d" * 64,
+        })
 
     def test_blocked_extraction_draft_never_challenges(self):
         self.configure()

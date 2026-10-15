@@ -25,7 +25,7 @@ Tools:
   get_extraction_fulltext(task_id)                    normalized Markdown with source coordinates
   save_extraction_draft(task_id, draft)               save isolated field/evidence draft
   check_extraction_draft(task_id)                     deterministic PASS/WARN/BLOCK validation
-  submit_extraction_draft(task_id)                    confirmed, challenged pending proposal
+  submit_extraction_draft(task_id)                    confirmed direct canonical reviewer submission
   finalize_extraction_consensus(task_id, proposal)     leader-only challenged consensus proposal
   config_show()                                       profiles, token masked
   config_set_url(url, profile?)                       save API base URL
@@ -83,6 +83,45 @@ DATA_SCHEMA = {
         },
     },
     "required": ["basis", "confidence", "criteria"],
+}
+
+EXTRACTION_EVIDENCE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "fieldId": {"type": "string", "description": "Exact field id from the template snapshot"},
+        "sourceAssetId": {"type": "string", "description": "Full-text source asset id"},
+        "sourceRevision": {"type": "string", "description": "Full-text source revision"},
+        "sourceHash": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "SHA-256 hex"},
+        "startOffset": {"type": "integer", "minimum": 0, "description": "Inclusive offset in normalized Markdown"},
+        "endOffset": {"type": "integer", "minimum": 1, "description": "Exclusive offset in normalized Markdown"},
+        "quote": {"type": "string", "minLength": 1, "description": "Exact bounded Markdown substring"},
+        "quoteHash": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "SHA-256 hex of quote"},
+        "section": {"type": "string"},
+        "paragraph": {"type": "integer", "minimum": 0},
+        "pdfPage": {"type": "integer", "minimum": 1},
+    },
+    "required": ["fieldId", "sourceAssetId", "sourceRevision", "sourceHash", "startOffset",
+                  "endOffset", "quote", "quoteHash"],
+}
+
+EXTRACTION_DRAFT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": "Canonical isolated Phase-2 extraction draft; use the template and full-text values exactly.",
+    "properties": {
+        "templateId": {"type": "string", "description": "Template id from extraction context"},
+        "templateVersion": {"type": "integer", "minimum": 1, "description": "Numeric template version"},
+        "sourceAssetId": {"type": "string", "description": "Full-text source asset id"},
+        "sourceRevision": {"type": "string", "description": "Full-text source revision"},
+        "sourceHash": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "SHA-256 hex"},
+        "expectedVersion": {"type": "integer", "minimum": 0, "description": "Isolated draft version, or 0"},
+        "values": {"type": "object", "description": "Object keyed by exact template field ids"},
+        "evidence": {"type": "array", "items": EXTRACTION_EVIDENCE_SCHEMA,
+                     "description": "Source-bound evidence records; use [] when none is defensible"},
+    },
+    "required": ["templateId", "templateVersion", "sourceAssetId", "sourceRevision", "sourceHash",
+                  "expectedVersion", "values", "evidence"],
 }
 
 TOOLS = [
@@ -161,8 +200,12 @@ TOOLS = [
     },
     {
         "name": "save_extraction_draft", "title": "Save isolated extraction draft",
-        "description": "Save the field-value/evidence draft. Include sourceAssetId, sourceRevision, sourceHash, template version and baseVersion from context; evidence quotes must match normalized Markdown offsets and quoteHash. Canonical reviewer data is untouched.",
-        "inputSchema": {**_OBJ, "properties": {**_TASK_ID, "draft": {"type": "object"}},
+        "description": ("Save the canonical isolated Phase-2 draft. First read extraction context and full text. "
+                        "draft must contain templateId, numeric templateVersion, sourceAssetId, string sourceRevision, "
+                        "64-hex sourceHash, expectedVersion, values object keyed by exact field ids, and an evidence "
+                        "array. Each evidence record must carry exact normalized-Markdown offsets, quote and quoteHash. "
+                        "Do not use legacy fields/baseVersion/v1 shapes. Canonical reviewer data is untouched."),
+        "inputSchema": {**_OBJ, "properties": {**_TASK_ID, "draft": EXTRACTION_DRAFT_SCHEMA},
                          "required": ["task_id", "draft"]},
         "annotations": {"idempotentHint": True},
     },
@@ -173,8 +216,8 @@ TOOLS = [
         "annotations": {"readOnlyHint": True},
     },
     {
-        "name": "submit_extraction_draft", "title": "Submit extraction proposal for human promotion",
-        "description": "After reviewing the draft and a non-blocking check, create a one-time challenge and submit the isolated proposal. Requires one explicit user confirmation. Returns PENDING_HUMAN_PROMOTION; this does not write canonical reviewer records.",
+        "name": "submit_extraction_draft", "title": "Submit extraction draft",
+        "description": "After reviewing the draft and a non-blocking check, create a one-time challenge and submit directly to the canonical reviewer record. Requires one explicit user confirmation. Returns SUBMITTED; consensus still requires the leader workflow.",
         "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
         "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     },
@@ -308,8 +351,8 @@ def call_tool(name, args):
             return tool_result(Client().extraction_request("POST", str(args["task_id"]), "check", {}))
         if name == "submit_extraction_draft":
             result = Client().submit_extraction_proposal(str(args["task_id"]))
-            return tool_result({"taskId": str(args["task_id"]), "status": "PENDING_HUMAN_PROMOTION",
-                                "proposal": result})
+            return tool_result({"taskId": str(args["task_id"]), "status": result.get("status", "SUBMITTED"),
+                                "submission": result})
         if name == "finalize_extraction_consensus":
             result = Client().submit_extraction_proposal(str(args["task_id"]), consensus=True,
                                                           proposal=args["proposal"])
@@ -384,11 +427,16 @@ def handle(msg):
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
             "instructions": ("Connector for /slr screening and extraction. Screening results are "
-                             "advisory recommendations and never human votes. Extraction proposals "
-                             "remain isolated until human promotion; consensus proposal writes require "
-                             "the leader capability and never finalize canonical consensus. "
-                             "submit_drafts / submit_result and extraction proposal writes require "
-                             "explicit user approval. Never repeat the agent token."),
+                             "advisory recommendations and never human votes. Always render "
+                             "complete inline Markdown tables for review results: task metadata, "
+                             "every custom extraction field, every evidence item, and every "
+                             "validation check; never return only a paper-level summary table. "
+                             "Reviewer-scoped "
+                             "extraction submissions write canonical reviewer data after explicit "
+                             "user approval; consensus proposal writes require the leader capability "
+                             "and never finalize canonical consensus. submit_drafts / submit_result "
+                             "and extraction submissions require explicit user approval. Never repeat "
+                             "the agent token."),
         }}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}

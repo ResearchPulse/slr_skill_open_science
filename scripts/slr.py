@@ -411,6 +411,18 @@ class Client:
         return None
 
     @staticmethod
+    def _challenge_value(payload, key):
+        if isinstance(payload, dict):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+            for nested_key in ("challenge", "data"):
+                found = Client._challenge_value(payload.get(nested_key), key)
+                if found:
+                    return found
+        return None
+
+    @staticmethod
     def _extraction_check_status(payload):
         if isinstance(payload, dict):
             status = payload.get("status")
@@ -432,7 +444,7 @@ class Client:
             check = self.extraction_request("POST", task_id, "check", {})
             if self._extraction_check_status(check) == "BLOCK":
                 raise ApiError(None, "EXTRACTION_CHECK_BLOCKED",
-                               "The current extraction draft has a BLOCK check and cannot be proposed.")
+                               "The current extraction draft has a BLOCK check and cannot be submitted.")
         challenge_action = "consensus-challenge" if consensus else "submit-challenge"
         submit_action = "consensus-proposal" if consensus else "submit"
         challenge_body = {"proposal": proposal or {}} if consensus else {}
@@ -440,9 +452,18 @@ class Client:
         challenge_id = self._challenge_id(challenge)
         if not challenge_id:
             raise ApiError(None, "BAD_RESPONSE", "Challenge response did not include a challenge identifier.")
-        body = {"challengeId": challenge_id}
-        if consensus:
-            body["proposal"] = proposal or {}
+        payload_digest = self._challenge_value(challenge, "payloadDigest")
+        if not payload_digest:
+            raise ApiError(None, "BAD_RESPONSE", "Challenge response did not include a payload digest.")
+        # The reviewer submit semantics changed from a human-promotion proposal to a
+        # direct canonical submission. Version the key so an old pending-proposal
+        # receipt cannot replay as the result of the new operation.
+        action_prefix = "mcp-consensus" if consensus else "mcp-extraction-direct-v2"
+        body = {
+            "challengeId": challenge_id,
+            "payloadDigest": payload_digest,
+            "idempotencyKey": f"{action_prefix}-{task_id}-{payload_digest}",
+        }
         return self.extraction_request("POST", task_id, submit_action, body)
 
 

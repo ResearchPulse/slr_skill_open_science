@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "slr-skill-open-science": "file:../slr-skill-open-science-0.1.0.tgz"
+  }
+}

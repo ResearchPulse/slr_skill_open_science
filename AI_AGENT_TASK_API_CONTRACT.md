@@ -278,17 +278,58 @@ Create an extraction task from the reviewer workspace by adding `taskKind: "extr
 | `PUT /api/agent/v1/extraction/tasks/{taskId}/draft` | Save an isolated field-value/evidence draft; canonical reviewer records are untouched |
 | `POST /api/agent/v1/extraction/tasks/{taskId}/check` | Run deterministic value and evidence checks |
 | `POST /api/agent/v1/extraction/tasks/{taskId}/submit-challenge` | Create a short-lived one-time submit challenge |
-| `POST /api/agent/v1/extraction/tasks/{taskId}/submit` | Consume the challenge and create an isolated pending reviewer proposal idempotently; canonical records remain untouched |
+| `POST /api/agent/v1/extraction/tasks/{taskId}/submit` | Consume the challenge and submit the reviewer-scoped extraction to the canonical reviewer record idempotently |
 | `POST /api/agent/v1/extraction/tasks/{taskId}/consensus-challenge` | Leader-only challenge for a consensus proposal |
 | `POST /api/agent/v1/extraction/tasks/{taskId}/consensus-proposal` | Leader-only proposal write; official finalization remains separately gated |
 
-`check` returns a versioned `PASS`, `WARN`, or `BLOCK` result. A reviewer proposal cannot be challenged while the current draft has no non-blocking check. The human web workflow promotes a pending proposal with `POST /api/projects/{projectId}/papers/{paperId}/agent-proposals/{proposalId}/promote`; this route is Firebase-authenticated and is the only step that writes the canonical reviewer or consensus record.
+`check` returns a versioned `PASS`, `WARN`, or `BLOCK` result. A reviewer draft cannot be challenged while the current draft has no non-blocking check. After the explicit confirmation, the agent submit route writes the canonical reviewer record idempotently. The separate human web promotion route remains available for legacy proposals and leader-only consensus proposals; consensus finalization is still Firebase-authenticated and leader-gated.
 
 Consensus agents are provisioned separately with the server-owned `extraction:leader` capability and a leader task. A reviewer-scoped task cannot call either consensus route. Legacy task repair is an explicit admin operation at `POST /api/admin/agents/{agentId}/migrate-task-kinds`; it reports migrated and rejected counts and is never performed implicitly by a read request.
 
 Evidence references carry `sourceAssetId`, `sourceRevision`, `sourceHash`, normalized Markdown `startOffset`/`endOffset`, a bounded `quote`, and `quoteHash`. Optional `pdfPage` metadata is supplemental and never replaces normalized offsets. Quotes must match the source hash and exact offsets or the API returns `400 INVALID_EVIDENCE`.
 
-The draft is stored under a task/agent/reviewer-scoped extraction namespace and includes the source asset, source revision/hash, template version, and canonical `baseVersion`. The submit challenge binds the exact draft payload digest and expires after ten minutes. A second confirmation is not required from the user: the MCP tool performs the backend challenge handshake internally after the single explicit confirmation. The result is `PENDING_HUMAN_PROMOTION`; it is not an official reviewer submission. If the source revision or canonical reviewer version changed, submission fails with a conflict and the human web workflow remains the only canonical writer.
+The request uses `expectedVersion`; the server stores the draft under a task/agent/reviewer-scoped extraction namespace with the source asset, source revision/hash, template version, and canonical `baseVersion`. The submit challenge binds the exact draft payload digest and expires after ten minutes. A second confirmation is not required from the user: the MCP tool performs the backend challenge handshake internally after the single explicit confirmation. The result is `SUBMITTED` and the canonical reviewer record is updated in the same transaction. If the source revision or canonical reviewer version changed, submission fails with a conflict.
+
+### Canonical `save_extraction_draft` body
+
+The MCP connector sends the following body under the `draft` argument. Read the template and
+normalized full text first; do not invent field IDs or source coordinates.
+
+```json
+{
+  "templateId": "template-123",
+  "templateVersion": 1,
+  "sourceAssetId": "asset-456",
+  "sourceRevision": "7",
+  "sourceHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "expectedVersion": 0,
+  "values": {
+    "field-study-design": { "stringValue": "Empirical evaluation" },
+    "field-sample-size": { "numberValue": 42 }
+  },
+  "evidence": [
+    {
+      "fieldId": "field-study-design",
+      "sourceAssetId": "asset-456",
+      "sourceRevision": "7",
+      "sourceHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "startOffset": 1200,
+      "endOffset": 1235,
+      "quote": "We evaluated the approach in an empirical study.",
+      "quoteHash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    }
+  ]
+}
+```
+
+`templateVersion` is numeric, `expectedVersion` is the isolated draft version from context (or
+`0` when no draft exists), `values` is an object keyed by exact template field IDs, and
+`evidence` is an array. Source hashes and quote hashes are lowercase SHA-256 hex without a
+`sha256:` prefix. Offsets are zero-based positions in normalized Markdown and `endOffset` is
+exclusive; each quote must be the exact substring at those offsets. For an unreported required
+field use `{ "isNotReported": true }`. If no defensible source evidence exists, send
+`evidence: []` and let the deterministic check report `WARN` or `BLOCK`. Legacy `fields`,
+`templateVersion: "v1"`, and `baseVersion` aliases are not part of the canonical MCP payload.
 
 ### MCP tool mapping
 
