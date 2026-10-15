@@ -101,7 +101,7 @@ at a time; do not render a standalone validation/checks table.
 For `/slr consensus`, render one primary comparison table per paper with exactly these columns:
 `Field`, `R1 value`, `R2 value`, `Agent decision`, `Recommended value`, and `Reason and checks`.
 Then render a separate evidence table with exactly these columns: `Reviewer`, `Field`, `Exact quote`,
-`Offset (start-end)`, and `Location`. Do not render a standalone validation/checks table.
+`Line (start-end)`, and `Location`. Do not render a standalone validation/checks table.
 
 Display simplification: render only the columns explicitly specified for the current workflow.
 Use custom field names, not internal field IDs. Never render source asset IDs, source revisions,
@@ -114,12 +114,14 @@ For every `/slr review`, render only these tables before the concluding prose:
    and `Full-text status`.
 2. Extraction fields with exactly: `Name`, `Actual value`, and `Evidence`. Use the custom
    template field name in `Name`; `Evidence` is the available evidence count/indicator.
-3. Evidence with exactly: `Exact quote`, `Offset (start-end)`, and
+3. Evidence with exactly: `Exact quote`, `Line (start-end)`, and
    `Section / paragraph / PDF page`.
 
-Offsets are zero-based character positions in the normalized Markdown source returned by
-`get_extraction_fulltext`; start is inclusive and end is exclusive. Display them compactly as
-`start-end`, and do not expose quote hashes or source identifiers.
+Display evidence locations as 1-based inclusive line ranges from the normalized Markdown source
+returned by `get_extraction_fulltext`: use `Line 42` for a single-line quote and `Line 42-45`
+for a multi-line quote. If line mapping is unavailable, use an empty-value marker. Keep the
+zero-based character offsets (`startOffset` inclusive, `endOffset` exclusive) in the MCP payload
+for validation, but do not render them or expose quote hashes/source identifiers.
 
 Do not render a `Validation checks` table or individual validation/check rows in review output.
 Run those checks internally. If a check is `BLOCK`, stop the write operation and explain the
@@ -365,7 +367,7 @@ another reviewer's submission.
    paper with a consensus-task metadata table containing exactly `Profile / project`, `Paper`, and
    `Full text`; a field-comparison table containing exactly `Field`, `R1 value`, `R2 value`,
    `Agent decision`, `Recommended value`, and `Reason and checks`; and an evidence table containing
-   exactly `Reviewer`, `Field`, `Exact quote`, `Offset (start-end)`, and `Location`.
+   exactly `Reviewer`, `Field`, `Exact quote`, `Line (start-end)`, and `Location`.
    `Location` is section / paragraph / PDF page. Do not render a standalone validation/checks table.
 4. For an exact same value use `AGREE`. If values differ in wording or formatting but the source
    evidence proves the same meaning, use `SEMANTIC_AGREE`, select a source-supported recommended
@@ -449,7 +451,8 @@ await host.mcp('slr', 'save_extraction_draft', { task_id, draft });
 Rules: `templateVersion` is numeric; `expectedVersion` is the isolated draft version from
 context, or `0` when no draft exists. Copy source metadata exactly from full text. Offsets are
 zero-based positions in normalized Markdown, `endOffset` is exclusive, and `quoteHash` is the
-SHA-256 hex digest of the exact quote. `values` is an object keyed by the template's exact field
+SHA-256 hex digest of the exact quote. Line ranges are presentation-only; never replace
+`startOffset`/`endOffset` in the MCP payload with line numbers. `values` is an object keyed by the template's exact field
 IDs and `evidence` is an array. Use `{ "isNotReported": true }` for a required value that the
 paper does not report. Send `evidence: []` when there is no defensible evidence, then let the
 deterministic check return its result. Do not use the legacy `fields` list, `templateVersion: "v1"`,
