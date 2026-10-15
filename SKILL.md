@@ -393,6 +393,34 @@ server-issued `payloadDigest`; never invent or omit that digest. The legacy
 After `get_extraction_context` and `get_extraction_fulltext`, use the exact field IDs and
 template snapshot returned by the context. Save one canonical draft with this shape:
 
+When invoking the connector from a Notebook, the MCP arguments must have the wrapper below;
+never pass the draft fields alongside `task_id` at the top level:
+
+```javascript
+await host.mcp('slr', 'save_extraction_draft', {
+  task_id: '<task id>',
+  draft: {
+    templateId: '<context.assignment.templateId>',
+    templateVersion: 1,
+    sourceAssetId: '<fulltext.sourceAssetId>',
+    sourceRevision: '<fulltext.sourceRevision>',
+    sourceHash: '<fulltext.sourceHash>',
+    expectedVersion: 0,
+    values: {},
+    evidence: [],
+  },
+});
+```
+
+`task_id` belongs only to the MCP argument object. It must not be copied into `draft`, and
+`templateId`, `templateVersion`, `source*`, `expectedVersion`, `values`, and `evidence` must
+all be inside `draft`. If a flat object was assembled first, normalize it before the call:
+
+```javascript
+const { task_id, ...draft } = payload;
+await host.mcp('slr', 'save_extraction_draft', { task_id, draft });
+```
+
 ```json
 {
   "templateId": "<context.assignment.templateId>",
