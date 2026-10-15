@@ -1,6 +1,6 @@
 ---
 name: slr
-description: Systematic literature review agent using the `slr` MCP connector. Screens assigned tasks with stage-specific advisory recommendations, or submits reviewer-scoped extraction drafts directly after evidence/value checks and explicit approval. Also configures the API server URL and agent token. Use for /slr or when asked to process assigned review tasks.
+description: Systematic literature review agent using the `slr` MCP connector. Screens assigned tasks with stage-specific advisory recommendations, performs reviewer-scoped extraction, or helps a project leader compare two submitted extractions and finalize consensus after evidence/value checks and explicit approval. Also configures the API server URL and agent token. Use for /slr or when asked to process assigned review tasks.
 argument-hint: "[setup | status | list | review [N or ids] | drafts | edit ID | submit [ids] | auto [N] | config ... | mcp | help]"
 ---
 
@@ -20,7 +20,8 @@ the saved profile, and the drafts folder.
 | Tool | Use |
 | --- | --- |
 | `connection_test` | profile, project, assigned / completed counts |
-| `list_tasks` (`status`, optional `stage`: TITLE_ABSTRACT / FULL_TEXT) | reviewer tasks with stage, kind, instructions, `protocolSnapshot`, paper metadata |
+| `list_tasks` (`status`, optional `stage`: TITLE_ABSTRACT / FULL_TEXT) | tasks visible to the active agent token, with stage, kind, instructions, `protocolSnapshot`, and paper metadata |
+| `list_consensus_tasks` | leader-only extraction consensus tasks; the server provisions them after both R1/R2 submit |
 | `get_task` | one task; verify a submission (`COMPLETED`) |
 | `get_markdown` | full text — `FULL_TEXT` tasks with `markdownPath` only |
 | `save_draft` | validate + save/replace a draft vote (does **not** submit) |
@@ -30,7 +31,10 @@ the saved profile, and the drafts folder.
 | `get_extraction_context` · `get_extraction_fulltext` | read extraction assignment, template and normalized paper source |
 | `save_extraction_draft` · `check_extraction_draft` | save an isolated proposal and run evidence/value checks |
 | `submit_extraction_draft` | submit a checked reviewer extraction directly to canonical reviewer data; one explicit confirmation |
-| `finalize_extraction_consensus` | leader-only consensus proposal; never finalizes canonical consensus |
+| `analyze_extraction_consensus` | leader-only read of R1/R2 submissions, every custom field, evidence and checks |
+| `save_extraction_consensus_draft` | leader-only challenged consensus draft; requires both reviewers submitted |
+| `submit_extraction_consensus` | leader-only official consensus submit; blocked by missing reviewer/conflict |
+| `finalize_extraction_consensus` | legacy leader-only proposal flow; do not use for official consensus |
 | `config_show` · `config_set_url` · `config_set_token` · `config_use` | profiles, URL, token |
 
 If these tools are missing, say so once and explain **MCP connector**; never try to reach the
@@ -59,6 +63,7 @@ API another way.
 | `/slr config use <P>` | `config_use` (it also tests the connection). |
 | `/slr config test` | `connection_test` |
 | `/slr mcp` | `connection_test` and report. If the tools are missing, explain **MCP connector**. |
+| `/slr consensus [task_id]` | Leader-only: discover eligible consensus tasks automatically when the ID is omitted, then read the R1/R2 comparison, show complete field/evidence/check tables, and save/submit only after explicit approval and only when no conflict remains. |
 
 Several projects: one profile each (`--profile <name>` on `config url` / `config token`,
 switch with `/slr config use <name>`). Switches and new tokens work immediately — no
@@ -75,6 +80,23 @@ unless the user explicitly asks for a brief summary. Always render the tables au
 do not wait for the user to ask to see them.
 This rule overrides any compact-output wording in the command table above.
 
+## Per-paper table restriction (takes precedence)
+
+Treat every paper/task as an isolated report. Never combine two or more papers or task ids in
+one Markdown table, including status, review, evidence, validation, submit, and finalize output.
+Repeat the complete table bundle separately for each paper.
+
+Do not render these standalone technical tables:
+
+- `Source | Source asset ID | Source revision | Source hash` or any equivalent provenance table.
+- A template-schema table whose primary columns are `Alias`, `Section`, `Field ID`, `Name`,
+  `Required`, and `Expected shape`.
+- An aggregate checks table or individual-check-detail table containing multiple paper/task ids.
+
+Keep only relevant source identity, template, or validation details inside the current paper's
+own overview, extracted-values, evidence, or validation table. The allowed output is one paper's
+overview table, extracted-values table, evidence table, and validation table at a time.
+
 For every `/slr review`, render these tables before the concluding prose:
 
 1. Task/source metadata: profile, project, server host, task id, paper, task kind, stage,
@@ -90,7 +112,7 @@ For every `/slr review`, render these tables before the concluding prose:
 For extraction tasks, the compact paper-level table `Paper | Extracted finding | Check` is
 forbidden as the only output. Do not claim that templates or evidence were reviewed unless
 the field, evidence, and check rows are visible in the response. Repeat the complete table
-bundle for each task, or use one combined table with a `task id` column; never collapse two
+bundle for each task; never use one combined table with a `task id` column and never collapse two
 or more tasks into one finding sentence per paper.
 
 For screening review, replace the extraction-fields table with one criterion row per
@@ -316,9 +338,43 @@ normalized full text, save the source-bound field/evidence draft, then run its d
 check. Do not submit while the check is `BLOCK`. After the user approves once, call
 `submit_extraction_draft`; the connector performs the one-time backend challenge and writes the
 reviewer-scoped canonical extraction record, returning `SUBMITTED`. The extraction queue reflects
-the submitted reviewer record immediately; this is not final consensus. Consensus proposal writes
-require a separately provisioned leader token; `finalize_extraction_consensus` does not finalize
-consensus.
+the submitted reviewer record immediately; this is not final consensus.
+
+### Leader consensus workflow
+
+Consensus tools require a leader-scoped token with the `extraction:leader` capability. A reviewer
+token must never be accepted for these operations, and a leader token must never be used to write
+another reviewer's submission.
+
+1. Call `list_consensus_tasks` first. The server provisions/reuses leader extraction tasks only
+   after both assigned reviewers submit. If no task is available, show a table stating that R1/R2
+   submission is incomplete and stop. If exactly one task is available, pass its id internally to
+   `analyze_extraction_consensus`; the user never needs to copy it. If multiple tasks are available,
+   process them one paper at a time, showing a separate table bundle for each.
+2. Call `analyze_extraction_consensus` for the selected leader task. If the result is
+   `WAITING_FOR_REVIEWERS`, show a table naming each missing reviewer and stop. Do not create a
+   draft or call a write tool.
+3. When `READY`, compare every custom template field separately. Show one complete table bundle for
+   this paper containing field id/name/section/required, R1 value, R2 value, recommended value,
+   comparison status, reason, value/evidence checks, and the complete evidence rows (quote,
+   offsets, section/paragraph/PDF page, source revision). Do not collapse this behind a follow-up.
+4. For an exact match use `AGREE`. If values differ but have the same meaning and the evidence
+   supports that interpretation, the agent may propose `SEMANTIC_AGREE` with a reason and
+   recommended value. A substantive difference is `CONFLICT`; explain the field-level reason and
+   leave that finding `PENDING`. `MISSING` is used when a reviewer omitted a value; a required
+   missing field blocks official consensus.
+5. After explicit approval, call `save_extraction_consensus_draft` with every template field,
+   findings, and the full `analysis`. The backend rechecks reviewer submission versions, template
+   snapshot, Cloudinary full-text revision/hash, values, and evidence before saving.
+6. If the saved analysis has any `CONFLICT`, required `MISSING`, or pending finding, stop at
+   `CONFLICT` and show the reasons. Never call `submit_extraction_consensus`.
+7. Otherwise ask for explicit approval to submit the displayed draft, then call
+   `submit_extraction_consensus` with its expected version. This writes the canonical official
+   project consensus and returns `COMPLETED`; verify it with the returned consensus view.
+
+The connector performs the one-time challenge handshake for both writes and always forwards the
+server-issued `payloadDigest`; never invent or omit that digest. The legacy
+`finalize_extraction_consensus` remains only for compatibility and creates a non-official proposal.
 
 ### Extraction draft payload (required)
 

@@ -219,8 +219,11 @@ class McpEndToEnd(unittest.TestCase):
         tools = json.loads(p.stdout)["result"]["tools"]
         names = {t["name"] for t in tools}
         self.assertEqual(names, {"connection_test", "list_tasks", "get_task", "get_markdown", "submit_result",
+                                 "list_consensus_tasks",
                                  "get_extraction_context", "get_extraction_fulltext", "save_extraction_draft",
                                  "check_extraction_draft", "submit_extraction_draft", "finalize_extraction_consensus",
+                                 "analyze_extraction_consensus", "save_extraction_consensus_draft",
+                                 "submit_extraction_consensus",
                                  "save_draft", "list_drafts", "get_draft", "submit_drafts",
                                  "config_show", "config_set_url", "config_set_token", "config_use"})
         extraction = next(t for t in tools if t["name"] == "save_extraction_draft")
@@ -255,6 +258,10 @@ class McpEndToEnd(unittest.TestCase):
         self.assertEqual(ct["structuredContent"]["assigned"], 6)
         self.assertEqual(ct["structuredContent"]["project"], "Demo review")
         self.assertEqual(lst["structuredContent"]["count"], 6)
+        rendered = lst["content"][0]["text"]
+        self.assertIn("| id |", rendered)
+        self.assertIn("t-ta", rendered)
+        self.assertNotIn('"items":', rendered)
 
     def test_stage_filter_is_sent_on_each_cursor_page(self):
         self.configure()
@@ -372,12 +379,12 @@ class McpEndToEnd(unittest.TestCase):
             "idempotencyKey": "mcp-extraction-t-extract-" + "d" * 64,
         })
 
-        proposal = {"fields": [{"fieldId": "f1", "value": "Adults"}], "confidence": 0.9}
+        proposal = {"expectedVersion": 0, "values": {"f1": {"stringValue": "Adults"}}, "findings": []}
         (consensus,) = self.mcp(("finalize_extraction_consensus", {"task_id": "t-extract",
                                                                      "proposal": proposal}))
         self.assertEqual(consensus["structuredContent"]["status"], "CONSENSUS_PROPOSAL")
         challenge_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "consensus-challenge")
-        self.assertEqual(challenge_post[2], {"proposal": proposal})
+        self.assertEqual(challenge_post[2], proposal)
         consensus_post = next(entry for entry in FakeApi.extraction_posts if entry[1] == "consensus-proposal")
         self.assertEqual(consensus_post[2], {
             "challengeId": "challenge-consensus-challenge",

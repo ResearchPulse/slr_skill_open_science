@@ -331,6 +331,14 @@ class Client:
             items = [t for t in items if t.get("status") == status]
         return project, items
 
+    def list_consensus_tasks(self, status="any"):
+        """List server-owned leader extraction tasks and provision them after R1/R2 submit."""
+        data = self._get_json("/agent/v1/extraction/consensus-tasks")
+        items = data.get("items", [])
+        if status != "any":
+            items = [task for task in items if task.get("status") == status]
+        return data.get("project"), items, data.get("readiness", [])
+
     def get_task(self, task_id):
         return self._get_json(f"/agent/v1/tasks/{urllib.parse.quote(task_id)}")
 
@@ -397,6 +405,10 @@ class Client:
             raise ApiError(status, "BAD_RESPONSE", "Unexpected response envelope.")
         return payload.get("data")
 
+    def get_extraction_consensus(self, task_id):
+        """Read the leader-only consensus comparison for one extraction task."""
+        return self.extraction_request("GET", task_id, "consensus")
+
     @staticmethod
     def _challenge_id(payload):
         if isinstance(payload, dict):
@@ -447,7 +459,16 @@ class Client:
                                "The current extraction draft has a BLOCK check and cannot be submitted.")
         challenge_action = "consensus-challenge" if consensus else "submit-challenge"
         submit_action = "consensus-proposal" if consensus else "submit"
-        challenge_body = {"proposal": proposal or {}} if consensus else {}
+        # The legacy leader route still uses the canonical consensus payload at
+        # the top level. Do not wrap it in {"proposal": ...}; the backend
+        # validates expectedVersion, values, and findings directly.
+        challenge_body = (proposal or {}) if consensus else {}
+        action_prefix = "mcp-consensus" if consensus else "mcp-extraction-direct-v2"
+        return self._submit_extraction_challenge(task_id, challenge_action, submit_action,
+                                                 challenge_body, action_prefix)
+
+    def _submit_extraction_challenge(self, task_id, challenge_action, submit_action,
+                                     challenge_body, action_prefix):
         challenge = self.extraction_request("POST", task_id, challenge_action, challenge_body)
         challenge_id = self._challenge_id(challenge)
         if not challenge_id:
@@ -455,16 +476,30 @@ class Client:
         payload_digest = self._challenge_value(challenge, "payloadDigest")
         if not payload_digest:
             raise ApiError(None, "BAD_RESPONSE", "Challenge response did not include a payload digest.")
-        # The reviewer submit semantics changed from a human-promotion proposal to a
-        # direct canonical submission. Version the key so an old pending-proposal
-        # receipt cannot replay as the result of the new operation.
-        action_prefix = "mcp-consensus" if consensus else "mcp-extraction-direct-v2"
         body = {
             "challengeId": challenge_id,
             "payloadDigest": payload_digest,
             "idempotencyKey": f"{action_prefix}-{task_id}-{payload_digest}",
         }
         return self.extraction_request("POST", task_id, submit_action, body)
+
+    def save_extraction_consensus_draft(self, task_id, draft):
+        return self._submit_extraction_challenge(
+            task_id,
+            "consensus-draft-challenge",
+            "consensus-draft",
+            draft,
+            "mcp-consensus-draft-v1",
+        )
+
+    def submit_extraction_consensus(self, task_id, expected_version):
+        return self._submit_extraction_challenge(
+            task_id,
+            "consensus-submit-challenge",
+            "consensus-submit",
+            {"expectedVersion": int(expected_version)},
+            "mcp-consensus-official-v1",
+        )
 
 
 # ------------------------------------------------------------------ audit log

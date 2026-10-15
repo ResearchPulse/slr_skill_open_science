@@ -14,6 +14,7 @@ Env overrides (API_BASE_URL, AGENT_TOKEN, REVIEW_PROFILE) still win if set.
 Tools:
   connection_test()                                   check URL + token, task counts
   list_tasks(status?)                                 tasks + project context
+  list_consensus_tasks()                              leader extraction tasks (auto-provisioned after R1/R2 submit)
   get_task(task_id)                                   one task / status / result
   get_markdown(task_id, max_wait?)                    full text (FULL_TEXT tasks only)
   save_draft(task_id, decision, reasoning, data, title?)  validate + save/replace a local draft
@@ -26,7 +27,10 @@ Tools:
   save_extraction_draft(task_id, draft)               save isolated field/evidence draft
   check_extraction_draft(task_id)                     deterministic PASS/WARN/BLOCK validation
   submit_extraction_draft(task_id)                    confirmed direct canonical reviewer submission
-  finalize_extraction_consensus(task_id, proposal)     leader-only challenged consensus proposal
+  analyze_extraction_consensus(task_id?)               leader-only R1/R2 comparison and evidence view
+  save_extraction_consensus_draft(task_id, draft)      leader-only challenged consensus draft
+  submit_extraction_consensus(task_id, expectedVersion) leader-only official consensus submission
+  finalize_extraction_consensus(task_id, proposal)     legacy leader-only consensus proposal
   config_show()                                       profiles, token masked
   config_set_url(url, profile?)                       save API base URL
   config_set_token(token, profile?)                   save token + test (never echoed)
@@ -124,6 +128,68 @@ EXTRACTION_DRAFT_SCHEMA = {
                   "expectedVersion", "values", "evidence"],
 }
 
+CONSENSUS_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "description": ("Complete comparison for every custom template field. Use AGREE only for exact "
+                    "canonical equality; SEMANTIC_AGREE only when both values mean the same thing; "
+                    "CONFLICT when Leader must decide; MISSING when a reviewer omitted a value."),
+    "properties": {
+        "schemaVersion": {"type": "string", "enum": ["leader-consensus-v1"]},
+        "status": {"type": "string", "enum": ["READY", "CONFLICT"]},
+        "summary": {"type": "string", "minLength": 1},
+        "generatedAt": {"type": "string"},
+        "sourceRevision": {"type": "string"},
+        "sourceHash": {"type": "string"},
+        "fields": {"type": "array", "minItems": 1, "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "fieldId": {"type": "string"},
+                "fieldName": {"type": "string"},
+                "sectionName": {"type": "string"},
+                "isRequired": {"type": "boolean"},
+                "status": {"type": "string", "enum": ["AGREE", "SEMANTIC_AGREE", "CONFLICT", "MISSING"]},
+                "reviewer1Value": {},
+                "reviewer2Value": {},
+                "reviewer1Evidence": {"type": "array", "items": EXTRACTION_EVIDENCE_SCHEMA},
+                "reviewer2Evidence": {"type": "array", "items": EXTRACTION_EVIDENCE_SCHEMA},
+                "recommendedValue": {},
+                "reason": {"type": "string", "minLength": 1},
+                "checks": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["fieldId", "status", "reason"],
+        }},
+    },
+    "required": ["schemaVersion", "status", "summary", "fields"],
+}
+
+CONSENSUS_FINDING_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "findingId": {"type": "string"},
+        "fieldId": {"type": "string"},
+        "kind": {"type": "string", "enum": ["VALUE_DISAGREEMENT", "MISSING_REQUIRED", "AI_SUGGESTION"]},
+        "status": {"type": "string", "enum": ["PENDING", "RESOLVED", "DISMISSED"]},
+        "reviewer1Value": {}, "reviewer2Value": {}, "proposedValue": {}, "resolution": {},
+        "reason": {"type": "string"},
+    },
+    "required": ["findingId", "fieldId", "kind", "status"],
+}
+
+CONSENSUS_DRAFT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "description": ("Leader consensus draft. Include every template field in values, every field in "
+                    "analysis.fields, and findings for disagreements. Both reviewer submissions must "
+                    "already be SUBMITTED."),
+    "properties": {
+        "expectedVersion": {"type": "integer", "minimum": 0},
+        "values": {"type": "object", "description": "Final candidate values keyed by exact template field ids"},
+        "findings": {"type": "array", "items": CONSENSUS_FINDING_SCHEMA},
+        "analysis": CONSENSUS_ANALYSIS_SCHEMA,
+    },
+    "required": ["expectedVersion", "values", "findings", "analysis"],
+}
+
 TOOLS = [
     {
         "name": "connection_test",
@@ -136,7 +202,7 @@ TOOLS = [
     {
         "name": "list_tasks",
         "title": "List SLR tasks",
-        "description": ("List tasks assigned to this reviewer workspace's agent (all cursor pages), "
+        "description": ("List tasks visible to the active agent token (all cursor pages), "
                         "including stage, instructions, protocolSnapshot and paper metadata "
                         "(title, abstract, keywords, fullTextStatus). Keywords are an array or "
                         "null when unavailable; never infer missing keywords. The page also includes the "
@@ -144,6 +210,15 @@ TOOLS = [
         "inputSchema": {**_OBJ, "properties": {
             "status": {"type": "string", "enum": ["ASSIGNED", "COMPLETED", "any"], "default": "ASSIGNED"},
             "stage": {"type": "string", "enum": ["TITLE_ABSTRACT", "FULL_TEXT"]}}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "list_consensus_tasks",
+        "title": "List leader consensus tasks",
+        "description": ("Leader-token only. List server-owned extraction consensus tasks for the active "
+                        "project. Tasks are provisioned automatically after both assigned reviewers "
+                        "submit, so the caller does not need to know or copy a task id."),
+        "inputSchema": {**_OBJ, "properties": {}},
         "annotations": {"readOnlyHint": True},
     },
     {
@@ -214,6 +289,34 @@ TOOLS = [
         "description": "Run deterministic value and evidence checks. Returns versioned PASS, WARN or BLOCK.",
         "inputSchema": {**_OBJ, "properties": _TASK_ID, "required": ["task_id"]},
         "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "analyze_extraction_consensus", "title": "Compare reviewer extraction consensus",
+        "description": ("Leader-token only. Read R1 and R2 submissions after both are SUBMITTED. "
+                        "task_id is optional when exactly one leader consensus task is visible; "
+                        "Returns every custom template field, both values, evidence quotes/offsets, "
+                        "value/evidence checks, agreement status and conflict reasons. Never writes."),
+        "inputSchema": {**_OBJ, "properties": _TASK_ID},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "save_extraction_consensus_draft", "title": "Save leader consensus draft",
+        "description": ("Leader-token only. Compare all R1/R2 custom fields, then save the complete "
+                        "consensus draft with analysis and findings. Both reviewers must be submitted. "
+                        "Requires explicit user approval; CONFLICT is saved as a draft but cannot become official."),
+        "inputSchema": {**_OBJ, "properties": {**_TASK_ID, "draft": CONSENSUS_DRAFT_SCHEMA},
+                         "required": ["task_id", "draft"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "name": "submit_extraction_consensus", "title": "Submit official extraction consensus",
+        "description": ("Leader-token only. Submit the saved consensus draft as the official project "
+                        "consensus. Allowed only when R1 and R2 submitted and every field is AGREE or "
+                        "SEMANTIC_AGREE with no unresolved conflict. Requires explicit user approval."),
+        "inputSchema": {**_OBJ, "properties": {**_TASK_ID,
+                         "expectedVersion": {"type": "integer", "minimum": 1}},
+                         "required": ["task_id", "expectedVersion"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     },
     {
         "name": "submit_extraction_draft", "title": "Submit extraction draft",
@@ -311,8 +414,180 @@ def log(msg):
     print(f"[slr-mcp] {msg}", file=sys.stderr, flush=True)
 
 
+def _markdown_cell(value):
+    if value is None:
+        text = "—"
+    elif isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    elif isinstance(value, bool):
+        text = "true" if value else "false"
+    else:
+        text = str(value)
+    return text.replace("|", r"\|").replace("\r", " ").replace("\n", "<br>")
+
+
+def _markdown_table(rows):
+    normalized = []
+    for row in rows or []:
+        normalized.append(row if isinstance(row, dict) else {"value": row})
+    columns = []
+    for row in normalized:
+        for key in row:
+            key = str(key)
+            if key not in columns:
+                columns.append(key)
+    if not columns:
+        columns = ["value"]
+    header = "| " + " | ".join(_markdown_cell(column) for column in columns) + " |"
+    separator = "|" + "|".join("---" for _ in columns) + "|"
+    body = [
+        "| " + " | ".join(_markdown_cell(row.get(column)) for column in columns) + " |"
+        for row in normalized
+    ]
+    return "\n".join([header, separator, *body])
+
+
+def _markdown_content(payload):
+    if isinstance(payload, dict):
+        summary = []
+        tables = []
+        for key, value in payload.items():
+            if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+                tables.append((key, value))
+            else:
+                summary.append({"field": key, "value": value})
+        parts = [_markdown_table(summary)] if summary else []
+        parts.extend(f"### {title}\n\n{_markdown_table(rows)}" for title, rows in tables)
+        return "\n\n".join(parts) or _markdown_table([])
+    if isinstance(payload, list):
+        return _markdown_table(payload)
+    return _markdown_table([{"value": payload}])
+
+
+def _consensus_root(payload):
+    """Find a leader-consensus response without hiding nested analysis data."""
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schemaVersion") == "leader-consensus-v1":
+        return payload
+    for key in ("consensus", "result", "leaderDraft", "payload"):
+        child = payload.get(key)
+        found = _consensus_root(child)
+        if found:
+            return found
+    return None
+
+
+def _consensus_markdown(payload):
+    root = _consensus_root(payload) or payload
+    parts = []
+    summary = []
+    for key in ("taskId", "projectId", "paperId", "status", "message", "missingReviewerIds"):
+        if key in root:
+            summary.append({"field": key, "value": root.get(key)})
+    if isinstance(payload, dict) and payload is not root:
+        for key in ("operation", "official", "canonicalConsensusFinalized", "confirmationConsumed"):
+            if key in payload:
+                summary.append({"field": key, "value": payload.get(key)})
+    if summary:
+        parts.append("## Consensus overview\n\n" + _markdown_table(summary))
+
+    reviewer_statuses = root.get("reviewerStatuses")
+    if isinstance(reviewer_statuses, list):
+        parts.append("## Reviewer submission status\n\n" + _markdown_table(reviewer_statuses))
+
+    analysis = root.get("analysis")
+    if not isinstance(analysis, dict):
+        draft = root.get("leaderDraft")
+        if isinstance(draft, dict):
+            analysis = draft.get("agentAnalysis")
+    if isinstance(analysis, dict):
+        fields = analysis.get("fields") or []
+        field_rows = []
+        evidence_rows = []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            r1_evidence = field.get("reviewer1Evidence") or []
+            r2_evidence = field.get("reviewer2Evidence") or []
+            field_rows.append({
+                "Field": field.get("fieldName") or field.get("fieldId"),
+                "Section": field.get("sectionName"),
+                "Field ID": field.get("fieldId"),
+                "Required": field.get("isRequired"),
+                "Status": field.get("status"),
+                "R1 value": field.get("reviewer1Value"),
+                "R2 value": field.get("reviewer2Value"),
+                "Recommended": field.get("recommendedValue"),
+                "R1 evidence": len(r1_evidence),
+                "R2 evidence": len(r2_evidence),
+                "Value/evidence checks": field.get("checks") or [],
+                "Reason": field.get("reason"),
+            })
+            for reviewer, items in (("R1", r1_evidence), ("R2", r2_evidence)):
+                for item in items:
+                    if isinstance(item, dict):
+                        evidence_rows.append({
+                            "Field": field.get("fieldName") or field.get("fieldId"),
+                            "Field ID": field.get("fieldId"),
+                            "Reviewer": reviewer,
+                            "Quote": item.get("quote"),
+                            "Offsets": f"{item.get('startOffset')}–{item.get('endOffset')}",
+                            "Start offset": item.get("startOffset"),
+                            "End offset": item.get("endOffset"),
+                            "Source asset ID": item.get("sourceAssetId"),
+                            "Source hash": item.get("sourceHash"),
+                            "Quote hash": item.get("quoteHash"),
+                            "Section": item.get("section"),
+                            "Paragraph": item.get("paragraph"),
+                            "PDF page": item.get("pdfPage"),
+                            "Source revision": item.get("sourceRevision"),
+                        })
+        parts.append("## Field-by-field value checks\n\n" + _markdown_table(field_rows))
+        if not evidence_rows:
+            evidence_rows = [{"Field": "—", "Field ID": "—", "Reviewer": "—", "Quote": "—",
+                              "Offsets": "—", "Start offset": "—", "End offset": "—",
+                              "Source asset ID": "—", "Source hash": "—", "Quote hash": "—",
+                              "Section": "—", "Paragraph": "—", "PDF page": "—",
+                              "Source revision": "—"}]
+        parts.append("## Evidence for each field\n\n" + _markdown_table(evidence_rows))
+        parts.append("## Analysis summary\n\n" + _markdown_table([
+            {"field": "analysis status", "value": analysis.get("status")},
+            {"field": "summary", "value": analysis.get("summary")},
+            {"field": "generated at", "value": analysis.get("generatedAt")},
+            {"field": "source asset", "value": root.get("source", {}).get("sourceAssetId") if isinstance(root.get("source"), dict) else None},
+            {"field": "source revision", "value": analysis.get("sourceRevision")},
+            {"field": "source hash", "value": analysis.get("sourceHash")},
+        ]))
+
+    submissions = root.get("reviewerSubmissions")
+    if isinstance(submissions, list):
+        rows = []
+        for submission in submissions:
+            if not isinstance(submission, dict):
+                continue
+            rows.append({
+                "Reviewer": submission.get("reviewerId"),
+                "Status": submission.get("status"),
+                "Version": submission.get("version"),
+                "Submitted at": submission.get("submittedAt"),
+                "Value fields": len(submission.get("values") or {}),
+                "Evidence items": len(submission.get("evidence") or []),
+            })
+        parts.append("## Reviewer payload summary\n\n" + _markdown_table(rows))
+
+    findings = root.get("findings")
+    if not isinstance(findings, list):
+        draft = root.get("leaderDraft")
+        findings = draft.get("findings") if isinstance(draft, dict) else None
+    if isinstance(findings, list):
+        parts.append("## Consensus findings\n\n" + _markdown_table(findings))
+    return "\n\n".join(parts) or _markdown_content(payload)
+
+
 def tool_result(payload, is_error=False):
-    return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}],
+    content = _consensus_markdown(payload) if _consensus_root(payload) else _markdown_content(payload)
+    return {"content": [{"type": "text", "text": content}],
             "structuredContent": payload, "isError": is_error}
 
 
@@ -338,6 +613,13 @@ def call_tool(name, args):
                                                  stage=args.get("stage"))
             return tool_result({"profile": active_profile(), "project": project,
                                 "count": len(items), "items": items})
+        if name == "list_consensus_tasks":
+            project, items, readiness = Client().list_consensus_tasks(status="any")
+            return tool_result({"profile": active_profile(), "project": project,
+                                "count": len(items), "items": items,
+                                "readiness": readiness,
+                                "message": ("Leader extraction tasks are provisioned automatically "
+                                             "after both assigned reviewers submit.")})
         if name == "get_task":
             return tool_result(Client().get_task(str(args["task_id"])))
         if name == "get_extraction_context":
@@ -349,6 +631,52 @@ def call_tool(name, args):
                                                            args["draft"]))
         if name == "check_extraction_draft":
             return tool_result(Client().extraction_request("POST", str(args["task_id"]), "check", {}))
+        if name == "analyze_extraction_consensus":
+            client = Client()
+            task_id = args.get("task_id")
+            if not task_id:
+                project, tasks, readiness = client.list_consensus_tasks(status="any")
+                if not tasks:
+                    return tool_result({
+                        "status": "WAITING_FOR_REVIEWERS",
+                        "project": project,
+                        "readiness": readiness,
+                        "message": ("No leader consensus task is available yet. The server creates one "
+                                     "automatically after both assigned reviewers submit."),
+                        "missingTaskId": True,
+                    })
+                if len(tasks) > 1:
+                    return tool_result({
+                        "status": "TASK_SELECTION_REQUIRED",
+                        "project": project,
+                        "message": "Multiple eligible papers are available; select one internally and analyze it one paper at a time.",
+                        "tasks": [{key: task.get(key) for key in ("id", "paperId", "paperTitle", "status", "createdAt")} for task in tasks],
+                    })
+                task_id = tasks[0].get("id")
+            return tool_result(client.get_extraction_consensus(str(task_id)))
+        if name == "save_extraction_consensus_draft":
+            client = Client()
+            task_id = str(args["task_id"])
+            result = client.save_extraction_consensus_draft(task_id, args["draft"])
+            try:
+                consensus = client.get_extraction_consensus(task_id)
+            except ApiError as error:
+                return tool_result({"operation": "CONSENSUS_DRAFT_SAVED", "result": result,
+                                    "verified": False, "verificationError": error.as_dict()}, True)
+            return tool_result({"operation": "CONSENSUS_DRAFT_SAVED", "result": result,
+                                "verified": True, "consensus": consensus})
+        if name == "submit_extraction_consensus":
+            client = Client()
+            task_id = str(args["task_id"])
+            result = client.submit_extraction_consensus(task_id, args["expectedVersion"])
+            try:
+                consensus = client.get_extraction_consensus(task_id)
+            except ApiError as error:
+                return tool_result({"operation": "CONSENSUS_OFFICIAL_SUBMITTED", "official": True,
+                                    "result": result, "verified": False,
+                                    "verificationError": error.as_dict()}, True)
+            return tool_result({"operation": "CONSENSUS_OFFICIAL_SUBMITTED", "official": True,
+                                "result": result, "verified": True, "consensus": consensus})
         if name == "submit_extraction_draft":
             result = Client().submit_extraction_proposal(str(args["task_id"]))
             return tool_result({"taskId": str(args["task_id"]), "status": result.get("status", "SUBMITTED"),
@@ -430,13 +758,18 @@ def handle(msg):
                              "advisory recommendations and never human votes. Always render "
                              "complete inline Markdown tables for review results: task metadata, "
                              "every custom extraction field, every evidence item, and every "
-                             "validation check; never return only a paper-level summary table. "
+                             "validation check, one paper at a time. Never combine multiple "
+                             "papers/tasks in one table. Never render standalone source "
+                             "asset/revision/hash, template-schema, or aggregate-check tables; "
+                             "keep only relevant details inside the current paper's tables. "
                              "Reviewer-scoped "
                              "extraction submissions write canonical reviewer data after explicit "
-                             "user approval; consensus proposal writes require the leader capability "
-                             "and never finalize canonical consensus. submit_drafts / submit_result "
-                             "and extraction submissions require explicit user approval. Never repeat "
-                             "the agent token."),
+                             "user approval. Leader consensus tools require the leader capability, "
+                             "both reviewer submissions, and compare every custom field plus every "
+                             "evidence item. Missing reviewers and CONFLICT stop the official submit; "
+                             "only a conflict-free draft may finalize canonical project consensus. "
+                             "submit_drafts / submit_result and all extraction writes require explicit "
+                             "user approval. Never repeat the agent token."),
         }}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}

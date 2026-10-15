@@ -22,6 +22,32 @@ npx github:ResearchPulse/slr_skill_open_science
 
 ---
 
+## Project Leader consensus via MCP
+
+When a project leader has a leader-scoped agent token, the `slr` connector can
+compare the two submitted reviewer extractions against the active custom
+template and the Cloudinary-backed full-text revision:
+
+| MCP tool | Purpose |
+| --- | --- |
+| `list_consensus_tasks` | Discover leader tasks and show which R1/R2 submissions are still missing; task ids are handled internally. |
+| `analyze_extraction_consensus` | Read R1/R2 submission readiness and render every field, value, evidence item, and check. |
+| `save_extraction_consensus_draft` | Save the complete leader draft after both reviewers submit; conflicts remain visible and block official submission. |
+| `submit_extraction_consensus` | Submit the conflict-free draft as the official project consensus. |
+
+The workflow returns `WAITING_FOR_REVIEWERS` without writing when either
+reviewer is missing. A substantive difference is returned as `CONFLICT` with
+field-level reasons; the connector does not submit it. The challenge handshake
+for both writes forwards the server-issued `payloadDigest` automatically.
+Reviewer-scoped tokens cannot call these leader-only operations.
+
+In Open-Science, use `/slr consensus` (the optional task id is only for an internally selected paper). The connector
+automatically discovers the leader task after both reviewers submit. The response always renders
+the full per-paper field/evidence/check tables; it does not hide the details
+behind a follow-up request.
+
+---
+
 ## 📑 Mục lục
 
 - [Tính năng](#-tính-năng)
@@ -42,6 +68,7 @@ npx github:ResearchPulse/slr_skill_open_science
 - 🔎 **Sàng lọc** từng bài theo IC/EC trong `protocolSnapshot` của task, mỗi nhận định đều trích dẫn section của bài.
 - ✍️ **Draft trước, gửi sau** — phiếu chỉ được gửi khi bạn đồng ý; có `audit.jsonl` làm nhật ký kiểm toán.
 - 🔌 **Một MCP connector `slr`** — task (`connection_test`, `list_tasks`, `get_task`, `get_markdown`), draft (`save_draft`, `list_drafts`, `get_draft`), gửi (`submit_drafts`, `submit_result`), cấu hình (`config_show`, `config_set_url`, `config_set_token`, `config_use`). Agent không cần shell.
+- 📊 **MCP dễ đọc** — phần text của kết quả MCP dùng Markdown table; `structuredContent` JSON vẫn giữ nguyên cho máy đọc.
 - 💬 **Cấu hình ngay trong chat** — `/slr config token <TOKEN>` có hiệu lực tức thì, không cần reconnect connector.
 - 🗂️ **Nhiều dự án** — mỗi dự án một profile, chuyển bằng `/slr config use`.
 - 🪶 **Không phụ thuộc** — Python thư viện chuẩn, installer Node không cần `npm install`.
