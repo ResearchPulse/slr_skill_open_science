@@ -582,15 +582,20 @@ Leader flow:
 
 1. Call `list_quality_tasks` and process one paper at a time. If R1 or R2 is missing or
    incomplete, show the missing reviewer in the table and stop consensus for that paper.
-2. Call `analyze_quality_consensus`. Inspect every criterion, not only textual differences.
+2. If a paper is already `RESOLVED` but a reviewer must correct a submitted assessment, the
+   project Leader must use the UI `Reopen` action first. Reopen removes the official resolution,
+   returns the QA phase to `InProgress` when it was completed, preserves the prior resolution in
+   the audit log, and allows the reviewer to create/submit a replacement assessment. Never edit
+   the database or claim that a reviewer update succeeded while the paper remains resolved.
+3. Call `analyze_quality_consensus`. Inspect every criterion, not only textual differences.
    Classify the comparison as exact agreement, semantic agreement, conflict or missing. A
    semantic agreement is an agent recommendation, not a backend shortcut; the leader must still
    decide the official resolution.
-3. Save any recommendation with `save_quality_resolution_draft`; it is never official.
-4. After explicit leader approval, call `submit_quality_resolution` with `finalDecision: 1`
+4. Save any recommendation with `save_quality_resolution_draft`; it is never official.
+5. After explicit leader approval, call `submit_quality_resolution` with `finalDecision: 1`
    for High or `finalDecision: 0` for Low. The backend recomputes the final score and records
    the audit event.
-5. Call `complete_quality_phase` only after every eligible paper has two complete reviewer
+6. Call `complete_quality_phase` only after every eligible paper has two complete reviewer
    assessments and an official resolution. Fewer than two reviewers is always a blocking state.
 
 Never claim that QA was submitted, resolved or completed based only on a draft or recommendation;
