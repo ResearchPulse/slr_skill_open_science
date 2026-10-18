@@ -492,16 +492,24 @@ reviewer coverage that reveals the other reviewer's submission state. Show only 
 reviewer's own task, submission, completion, values, comments, and evidence. R1/R2 comparison
 tables are leader-only and must never be inferred from an empty or generic response shape.
 
-For every QA command, render the complete paper-level tables automatically. At minimum include:
+For every QA command, render complete paper-level tables automatically, with this command-specific
+behavior:
 
-1. `QA overview`: project, paper, task id, role, phase status and reviewer coverage.
-2. `Criteria/assessment`: criterion id, checklist, question, weight, comments, status,
-   recommendation and checks. For leader-scoped output only, also include R1/R2 value/score.
-   Reviewer-scoped output must contain only the current reviewer's values and status.
-3. `Evidence`: exact quote, PDF page and section/paragraph for the current reviewer. Leader-scoped
-   output may additionally identify R1/R2 evidence with the `Reviewer` column. Do not render
+1. `/slr qa list` is a progress queue. For each paper, render a `QA overview` table retaining
+   `Project`, `Paper`, `Task ID`, `Role`, `Phase status`, `Reviewer coverage`, and `Resolution`.
+   Keep a compact status row with `Checklist`, `Comments`, and `Recommendation` when those values
+   are available. Do not invent criterion rows or evidence when the list payload has not loaded
+   reviewer details. Do not put `Reviewer detail not loaded by list command.` in a table; write
+   this sentence outside the table instead: `Review details are available through /slr qa
+   consensus after both reviewers submit.` Do not render an empty `Criteria/assessment` or
+   `Evidence` table just to satisfy the format.
+2. `/slr qa review` and `/slr qa consensus` render their actual criterion-level details. The
+   consensus table must contain `Question`, `R1 answer`, `R2 answer`, `Status`, `Recommendation`,
+   and `Reason/checks`; its evidence table must contain `Evidence quote`, `PDF page`, and
+   `Section/paragraph`, with `Reviewer` only in leader-scoped comparison output.
+3. Reviewer-scoped output must contain only the current reviewer's values and status. Do not render
    source asset ID, source revision, source hash, quote hash, exact start/end offsets, or
-   `pdfHighlightCoordinates`.
+   `pdfHighlightCoordinates` in any user-facing table.
 
 The exact quote and source hash are canonical evidence. `pdfHighlightCoordinates` may be retained
 for UI compatibility but never replaces exact source evidence. A quote must be an exact bounded
