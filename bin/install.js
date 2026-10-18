@@ -293,7 +293,9 @@ function registerConnector(exe, config) {
   let id;
   if (existing) {
     id = recordId(existing);
-    const r = osJson(exe, ['connector', 'update', id], JSON.stringify({ ...config, name: undefined, env: {}, envCredentialIds: {} }));
+    // Do not send both legacy env values and shared credential bindings. Open-Science
+    // treats those fields as mutually exclusive, even when both objects are empty.
+    const r = osJson(exe, ['connector', 'update', id], JSON.stringify({ ...config, name: undefined }));
     if (!r.ok) throw new Error(`connector update failed: ${(r.err && r.err.message) || r.text}`);
   } else {
     const r = osJson(exe, ['connector', 'add'], JSON.stringify(config));
