@@ -515,7 +515,48 @@ Reviewer flow:
 2. Score every configured criterion as `Yes`, `No`, or `Unclear`; do not invent criteria or
    weights. The MCP payload uses the backend's numeric wire values internally, but all
    user-facing tables must show the labels and never expose `0`, `1`, or `2` as answer codes.
-   Save with `save_quality_assessment`.
+   Build and save one canonical draft with `save_quality_assessment`. The exact wrapper is:
+
+   ```javascript
+   await host.mcp('slr', 'save_quality_assessment', {
+     paper_id: '<paper id>',
+     draft: {
+       notes: '<overall reviewer note or null>',
+       decisionItems: [
+         {
+           qualityCriterionId: '<criterion.criterionId>',
+           value: 0, // 0 = Yes, 1 = No, 2 = Unclear
+           comment: '<criterion-specific rationale>',
+           pdfHighlightCoordinates: null,
+           evidence: [
+             {
+               criterionId: '<same criterion id>',
+               quote: '<exact bounded substring from get_quality_source.markdown>',
+               sourceAssetId: '<source.sourceAssetId>',
+               sourceRevision: '<source.sourceRevision>',
+               sourceHash: '<source.sourceHash>',
+               startOffset: 0,
+               endOffset: 10,
+               quoteHash: '<sha256(quote)>',
+               pdfPage: 1,
+               section: '<section or paragraph>'
+             }
+           ]
+         }
+       ]
+     }
+   });
+   ```
+
+   `decisionItems` must contain exactly one item for every criterion returned by
+   `get_quality_strategy`, using the exact `criterionId`; it must not be empty. Copy source
+   identity unchanged from `get_quality_source`, calculate zero-based character offsets against
+   that exact Markdown, and calculate `quoteHash` as SHA-256 of the exact quote. Use
+   `evidence: []` only when the criterion has no defensible source passage. Do not use the
+   extraction/legacy keys `fields`, `criteria`, `values`, or `assessment`; do not send a probe
+   payload such as `{fields: []}`. If the save call fails, fix the save payload first and do not
+   call `check_quality_assessment` as a substitute. `QA_DRAFT_NOT_FOUND` after a failed save means
+   no draft was written; it is not proof that the paper had no QA draft.
 3. Call `check_quality_assessment`. Any missing criterion, stale source, invalid quote, wrong
    offset, or missing source metadata is `BLOCK` and must be fixed.
 4. Show the complete tables and ask for explicit approval before `submit_quality_assessment`.

@@ -1,6 +1,6 @@
 {
   "name": "slr-skill-open-science",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "One-command installer for the /slr systematic literature review skill + MCP connector in Open-Science.",
   "bin": {
     "slr-skill-open-science": "bin/install.js"

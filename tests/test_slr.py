@@ -400,10 +400,23 @@ class McpEndToEnd(unittest.TestCase):
     def test_quality_assessment_draft_save_url_encodes_paper_id(self):
         """Regression: Phase 3 QA handlers must import urllib before quoting paper ids."""
         self.configure()
-        draft = {"criteria": [{"id": "C1", "value": 1}], "evidence": []}
+        draft = {"notes": None, "decisionItems": [{"qualityCriterionId": "C1", "value": 1,
+                                                       "comment": "not applicable", "evidence": []}]}
         (saved,) = self.mcp(("save_quality_assessment", {"paper_id": "paper/1", "draft": draft}),)
         self.assertFalse(saved["isError"])
         self.assertEqual(saved["structuredContent"]["draft"], draft)
+
+    def test_quality_assessment_rejects_legacy_or_empty_drafts_before_http(self):
+        """A malformed draft must not become the misleading QA_DRAFT_NOT_FOUND follow-up."""
+        self.configure()
+        legacy, empty = self.mcp(
+            ("save_quality_assessment", {"paper_id": "paper/1", "draft": {"fields": []}}),
+            ("save_quality_assessment", {"paper_id": "paper/1", "draft": {"decisionItems": []}}),
+        )
+        for result in (legacy, empty):
+            self.assertTrue(result["isError"])
+            self.assertEqual(result["structuredContent"]["code"], "INVALID_QA_DRAFT")
+        self.assertFalse(FakeApi.extraction_posts)
 
     def test_blocked_extraction_draft_never_challenges(self):
         self.configure()

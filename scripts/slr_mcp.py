@@ -52,7 +52,7 @@ from slr import (ApiError, Client, active_profile, build_body, drafts_table,  # 
 # Drafts live on the host, one folder per profile (the chat's working folder is not visible here).
 slr.WORKDIR_DEFAULT = lambda: Path.home() / "slr-paper-review" / active_profile()
 
-SERVER_INFO = {"name": "slr", "version": "1.0.0"}
+SERVER_INFO = {"name": "slr", "version": "1.0.1"}
 SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 _OBJ = {"type": "object", "additionalProperties": False}
@@ -195,11 +195,11 @@ CONSENSUS_DRAFT_SCHEMA = {
 QUALITY_EVIDENCE_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
-        "criterionId": {"type": "string"},
-        "quote": {"type": "string", "minLength": 1},
-        "sourceAssetId": {"type": "string"},
-        "sourceRevision": {"type": "string"},
-        "sourceHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "criterionId": {"type": "string", "description": "Must match the parent decision item's qualityCriterionId"},
+        "quote": {"type": "string", "minLength": 1, "description": "Exact bounded substring of get_quality_source.markdown"},
+        "sourceAssetId": {"type": "string", "description": "Copied unchanged from get_quality_source"},
+        "sourceRevision": {"type": "string", "description": "Copied unchanged from get_quality_source"},
+        "sourceHash": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "Copied unchanged from get_quality_source"},
         "startOffset": {"type": "integer", "minimum": 0},
         "endOffset": {"type": "integer", "minimum": 1},
         "quoteHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -223,10 +223,45 @@ QUALITY_ASSESSMENT_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
         "notes": {"type": ["string", "null"]},
-        "decisionItems": {"type": "array", "items": QUALITY_DECISION_ITEM_SCHEMA, "minItems": 1},
+        "decisionItems": {"type": "array", "items": QUALITY_DECISION_ITEM_SCHEMA, "minItems": 1,
+                          "description": "Exactly one item per criterion returned by get_quality_strategy"},
     },
     "required": ["decisionItems"],
 }
+
+
+def _validate_quality_assessment_draft(draft):
+    """Reject malformed QA drafts before they become a misleading missing-draft error."""
+    if not isinstance(draft, dict):
+        raise ApiError(None, "INVALID_QA_DRAFT", "draft must be an object with decisionItems.")
+    legacy = sorted(set(draft).intersection({"fields", "criteria", "values", "assessment"}))
+    if legacy:
+        raise ApiError(None, "INVALID_QA_DRAFT",
+                       "Use draft.decisionItems, not legacy key(s) " + ", ".join(legacy) + ".")
+    items = draft.get("decisionItems")
+    if not isinstance(items, list) or not items:
+        raise ApiError(None, "INVALID_QA_DRAFT",
+                       "draft.decisionItems must contain one scored item for every QA criterion; "
+                       "do not call save with an empty probe payload.")
+    seen = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ApiError(None, "INVALID_QA_DRAFT", f"decisionItems[{index}] must be an object.")
+        criterion_id = item.get("qualityCriterionId")
+        if not isinstance(criterion_id, str) or not criterion_id.strip():
+            raise ApiError(None, "INVALID_QA_DRAFT",
+                           f"decisionItems[{index}].qualityCriterionId is required.")
+        if criterion_id in seen:
+            raise ApiError(None, "INVALID_QA_DRAFT", f"Duplicate qualityCriterionId: {criterion_id}.")
+        seen.add(criterion_id)
+        if item.get("value") not in (0, 1, 2):
+            raise ApiError(None, "INVALID_QA_DRAFT",
+                           f"decisionItems[{index}].value must be 0 (Yes), 1 (No), or 2 (Unclear).")
+        evidence = item.get("evidence", [])
+        if evidence is not None and not isinstance(evidence, list):
+            raise ApiError(None, "INVALID_QA_DRAFT",
+                           f"decisionItems[{index}].evidence must be an array.")
+    return draft
 
 TOOLS = [
     {
@@ -396,7 +431,10 @@ TOOLS = [
     },
     {
         "name": "save_quality_assessment", "title": "Save QA assessment draft",
-        "description": "Reviewer-only. Save or replace your own criterion answers and source-bound evidence without changing the canonical submission.",
+        "description": ("Reviewer-only. Save or replace your own QA draft without changing the canonical submission. "
+                        "draft MUST be {notes?, decisionItems:[{qualityCriterionId,value,comment?,pdfHighlightCoordinates?,evidence?}]}; "
+                        "include exactly one decisionItems entry per configured criterion. Do not use fields, criteria, values, "
+                        "assessment, or an empty probe payload."),
         "inputSchema": {**_OBJ, "properties": {**_PAPER_ID, "draft": QUALITY_ASSESSMENT_SCHEMA}, "required": ["paper_id", "draft"]},
         "annotations": {"idempotentHint": True},
     },
@@ -925,7 +963,8 @@ def call_tool(name, args):
             return tool_result(Client().quality_request("GET", f"/papers/{paper_id}/assessment"))
         if name == "save_quality_assessment":
             paper_id = urllib.parse.quote(str(args["paper_id"]))
-            return tool_result(Client().quality_request("PUT", f"/papers/{paper_id}/assessment/draft", args["draft"]))
+            draft = _validate_quality_assessment_draft(args.get("draft"))
+            return tool_result(Client().quality_request("PUT", f"/papers/{paper_id}/assessment/draft", draft))
         if name == "check_quality_assessment":
             paper_id = urllib.parse.quote(str(args["paper_id"]))
             return tool_result(Client().quality_request("POST", f"/papers/{paper_id}/assessment/check", {}))
@@ -1031,6 +1070,11 @@ def handle(msg):
                              "source hashes, quote hashes, exact offsets, and pdfHighlightCoordinates "
                              "remain internal to the MCP payload and are not rendered. In reviewer "
                              "scope, omit the Reviewer column because the current reviewer is implicit. "
+                             "For QA saves, draft must contain decisionItems (one per configured criterion) "
+                             "with numeric value 0/1/2 and source-bound evidence; never send legacy fields, "
+                             "criteria, values, assessment, or an empty probe draft. A save error means no "
+                             "draft exists, so do not call QA check and report QA_DRAFT_NOT_FOUND as if it "
+                             "were the primary failure. "
                              "Reviewer tokens never receive peer "
                              "content. Leader QA comparisons cover every criterion and official "
                              "resolution requires explicit confirmation after both reviewer assessments "
