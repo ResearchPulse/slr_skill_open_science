@@ -40,6 +40,7 @@ import json
 import os
 import sys
 import traceback
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -638,32 +639,19 @@ def _consensus_markdown(payload):
                             "Field ID": field.get("fieldId"),
                             "Reviewer": reviewer,
                             "Quote": item.get("quote"),
-                            "Offsets": f"{item.get('startOffset')}–{item.get('endOffset')}",
-                            "Start offset": item.get("startOffset"),
-                            "End offset": item.get("endOffset"),
-                            "Source asset ID": item.get("sourceAssetId"),
-                            "Source hash": item.get("sourceHash"),
-                            "Quote hash": item.get("quoteHash"),
                             "Section": item.get("section"),
                             "Paragraph": item.get("paragraph"),
                             "PDF page": item.get("pdfPage"),
-                            "Source revision": item.get("sourceRevision"),
                         })
         parts.append("## Field-by-field value checks\n\n" + _markdown_table(field_rows))
         if not evidence_rows:
             evidence_rows = [{"Field": "—", "Field ID": "—", "Reviewer": "—", "Quote": "—",
-                              "Offsets": "—", "Start offset": "—", "End offset": "—",
-                              "Source asset ID": "—", "Source hash": "—", "Quote hash": "—",
-                              "Section": "—", "Paragraph": "—", "PDF page": "—",
-                              "Source revision": "—"}]
+                              "Section": "—", "Paragraph": "—", "PDF page": "—"}]
         parts.append("## Evidence for each field\n\n" + _markdown_table(evidence_rows))
         parts.append("## Analysis summary\n\n" + _markdown_table([
             {"field": "analysis status", "value": analysis.get("status")},
             {"field": "summary", "value": analysis.get("summary")},
             {"field": "generated at", "value": analysis.get("generatedAt")},
-            {"field": "source asset", "value": root.get("source", {}).get("sourceAssetId") if isinstance(root.get("source"), dict) else None},
-            {"field": "source revision", "value": analysis.get("sourceRevision")},
-            {"field": "source hash", "value": analysis.get("sourceHash")},
         ]))
 
     submissions = root.get("reviewerSubmissions")
@@ -702,8 +690,18 @@ def _is_quality_payload(payload):
             or isinstance(analysis, dict) and analysis.get("schemaVersion") == "quality-consensus-v1")
 
 
+def _quality_answer_label(value):
+    """Render the QA answer semantically; numeric wire values stay internal."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"yes", "no", "unclear"}:
+            return normalized.capitalize()
+    return {0: "Yes", 1: "No", 2: "Unclear"}.get(value, value)
+
+
 def _quality_markdown(payload):
     parts = []
+    reviewer_scoped = payload.get("profileScope") == "REVIEWER" or payload.get("role") == "REVIEWER"
     summary = []
     for key in ("taskId", "projectId", "paperId", "paperTitle", "role", "status", "profileScope", "message"):
         if key in payload:
@@ -714,19 +712,34 @@ def _quality_markdown(payload):
         parts.append("## QA overview\n\n" + _markdown_table(summary))
 
     for key, title in (("reviewerStatuses", "Reviewer submission status"), ("items", "QA tasks"), ("strategies", "QA strategy")):
+        if reviewer_scoped and key == "reviewerStatuses":
+            continue
         value = payload.get(key)
         if isinstance(value, list):
             rows = []
             for item in value:
                 if isinstance(item, dict):
-                    rows.append(item)
+                    if reviewer_scoped and key == "items":
+                        own_assessments = item.get("assessments") or []
+                        own = own_assessments[0] if own_assessments and isinstance(own_assessments[0], dict) else {}
+                        rows.append({
+                            "Task ID": item.get("taskId"),
+                            "Paper": item.get("paperTitle") or item.get("paperId"),
+                            "Status": item.get("status"),
+                            "My submission": own.get("submitted", False),
+                            "My completion": own.get("completion"),
+                        })
+                    else:
+                        rows.append(item)
             if rows:
                 parts.append(f"## {title}\n\n" + _markdown_table(rows))
         elif isinstance(value, dict):
             parts.append(f"## {title}\n\n" + _markdown_table([{"Section": key, "Value": value}]))
 
     analysis = payload.get("analysis")
-    if isinstance(analysis, dict):
+    # Reviewer-scoped payloads must never render the leader's cross-review analysis,
+    # which contains peer values, reviewer labels, and peer evidence.
+    if isinstance(analysis, dict) and not reviewer_scoped:
         fields = analysis.get("fields") or []
         rows, evidence_rows = [], []
         for field in fields:
@@ -740,8 +753,8 @@ def _quality_markdown(payload):
                 "Section": field.get("sectionName"),
                 "Weight": field.get("weight"),
                 "Status": field.get("status"),
-                "R1 answer/score": f"{field.get('reviewer1Value')} / {field.get('reviewer1Score')}",
-                "R2 answer/score": f"{field.get('reviewer2Value')} / {field.get('reviewer2Score')}",
+                "R1 answer": _quality_answer_label(field.get("reviewer1Value")),
+                "R2 answer": _quality_answer_label(field.get("reviewer2Value")),
                 "R1 evidence": len(r1), "R2 evidence": len(r2),
                 "Checks": field.get("checks") or [], "Reason": field.get("reason"),
             })
@@ -751,9 +764,7 @@ def _quality_markdown(payload):
                         evidence_rows.append({
                             "Field": field.get("fieldName") or field.get("fieldId"),
                             "Reviewer": reviewer, "Exact quote": item.get("quote"),
-                            "Source asset": item.get("sourceAssetId"), "Source revision": item.get("sourceRevision"),
-                            "Source hash": item.get("sourceHash"), "Offsets": f"{item.get('startOffset')}–{item.get('endOffset')}",
-                            "Quote hash": item.get("quoteHash"), "PDF page": item.get("pdfPage"),
+                            "PDF page": item.get("pdfPage"),
                         })
         parts.append("## Criterion-by-criterion comparison\n\n" + _markdown_table(rows or [{"Field": "—", "Status": analysis.get("status")}]))
         parts.append("## Evidence\n\n" + _markdown_table(evidence_rows or [{"Field": "—", "Reviewer": "—", "Evidence": "Missing"}]))
@@ -769,14 +780,23 @@ def _quality_markdown(payload):
         for assessment in assessments:
             if not isinstance(assessment, dict):
                 continue
-            rows.append({"Reviewer": assessment.get("reviewerId"), "Name": assessment.get("reviewerName"), "Score": assessment.get("score"), "Notes": assessment.get("notes")})
+            assessment_row = {"Name": assessment.get("reviewerName"), "Score": assessment.get("score"), "Notes": assessment.get("notes")}
+            if not reviewer_scoped:
+                assessment_row["Reviewer"] = assessment.get("reviewerId")
+            rows.append(assessment_row)
             for item in assessment.get("decisionItems") or []:
                 if not isinstance(item, dict):
                     continue
-                rows.append({"Reviewer": assessment.get("reviewerId"), "Criterion": item.get("qualityCriterionId"), "Question": item.get("criterionQuestion"), "Answer": item.get("value"), "Comment": item.get("comment"), "Evidence count": len(item.get("evidence") or [])})
+                item_row = {"Criterion": item.get("qualityCriterionId"), "Question": item.get("criterionQuestion"), "Answer": _quality_answer_label(item.get("value")), "Comment": item.get("comment"), "Evidence count": len(item.get("evidence") or [])}
+                if not reviewer_scoped:
+                    item_row["Reviewer"] = assessment.get("reviewerId")
+                rows.append(item_row)
                 for evidence in item.get("evidence") or []:
                     if isinstance(evidence, dict):
-                        evidence_rows.append({"Reviewer": assessment.get("reviewerId"), "Criterion": item.get("qualityCriterionId"), "Exact quote": evidence.get("quote"), "Source hash": evidence.get("sourceHash"), "Quote hash": evidence.get("quoteHash"), "Offsets": f"{evidence.get('startOffset')}–{evidence.get('endOffset')}"})
+                        evidence_row = {"Criterion": item.get("qualityCriterionId"), "Exact quote": evidence.get("quote")}
+                        if not reviewer_scoped:
+                            evidence_row["Reviewer"] = assessment.get("reviewerId")
+                        evidence_rows.append(evidence_row)
         parts.append("## Assessment values\n\n" + _markdown_table(rows or [{"Assessment": "None"}]))
         parts.append("## Assessment evidence\n\n" + _markdown_table(evidence_rows or [{"Evidence": "None"}]))
 
@@ -1006,8 +1026,12 @@ def handle(msg):
                              "evidence item. Missing reviewers and CONFLICT stop the official submit; "
                              "only a conflict-free draft may finalize canonical project consensus. "
                              "Quality Assessment commands always render complete criterion-level tables "
-                             "with reviewer values, scores, comments, evidence quotes, source hashes, "
-                             "offsets, checks and conflict reasons. Reviewer tokens never receive peer "
+                             "with reviewer values, scores, comments, evidence quotes, page/section "
+                             "locations, checks and conflict reasons. Source asset IDs, source revisions, "
+                             "source hashes, quote hashes, exact offsets, and pdfHighlightCoordinates "
+                             "remain internal to the MCP payload and are not rendered. In reviewer "
+                             "scope, omit the Reviewer column because the current reviewer is implicit. "
+                             "Reviewer tokens never receive peer "
                              "content. Leader QA comparisons cover every criterion and official "
                              "resolution requires explicit confirmation after both reviewer assessments "
                              "are complete. submit_drafts / submit_result and all extraction/QA writes require explicit "

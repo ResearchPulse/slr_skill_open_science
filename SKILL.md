@@ -118,10 +118,12 @@ For `/slr consensus`, render one primary comparison table per paper with exactly
 Then render a separate evidence table with exactly these columns: `Reviewer`, `Field`, `Exact quote`,
 `Line (start-end)`, and `Location`. Do not render a standalone validation/checks table.
 
-Display simplification: render only the columns explicitly specified for the current workflow.
-Use custom field names, not internal field IDs. Never render source asset IDs, source revisions,
-source hashes, quote hashes, raw template schema columns, or standalone validation/check tables.
-Retain all omitted identifiers in the MCP payload and validation logic.
+Display simplification: render all workflow fields except the following evidence metadata:
+`Source asset ID`, `Source revision`, `Source hash`, `Quote hash`, `Exact start/end offsets`,
+and `pdfHighlightCoordinates`. These values remain in the MCP payload and validation logic;
+they are not user-facing columns. In reviewer scope, omit the `Reviewer` column because the
+current reviewer is implicit. Keep all other fields, including exact quotes, PDF page,
+section/paragraph, comments, checks, and conflict reasons.
 
 For every `/slr review`, render only these tables before the concluding prose:
 
@@ -483,13 +485,23 @@ source of truth. Reviewer-scoped tokens can see only their assigned papers and o
 leader-scoped tokens can compare both submitted reviewer assessments and submit official
 resolutions. Never reuse extraction fields or expose peer review content to a reviewer.
 
+Role redaction is mandatory in the user-facing output: determine `profileScope`/`role` before
+rendering. For a reviewer-scoped response, never render `R1`, `R2`, `reviewer1`, `reviewer2`,
+peer reviewer ids, peer scores, peer comments, peer evidence, reviewer-comparison tables, or
+reviewer coverage that reveals the other reviewer's submission state. Show only the current
+reviewer's own task, submission, completion, values, comments, and evidence. R1/R2 comparison
+tables are leader-only and must never be inferred from an empty or generic response shape.
+
 For every QA command, render the complete paper-level tables automatically. At minimum include:
 
 1. `QA overview`: project, paper, task id, role, phase status and reviewer coverage.
-2. `Criteria/assessment`: criterion id, checklist, question, weight, R1 value/score, R2
-   value/score when leader-scoped, comments, status, recommendation and checks.
-3. `Evidence`: reviewer, criterion, exact quote, source asset id, source revision, source hash,
-   quote hash, exact start/end offsets, PDF page and section.
+2. `Criteria/assessment`: criterion id, checklist, question, weight, comments, status,
+   recommendation and checks. For leader-scoped output only, also include R1/R2 value/score.
+   Reviewer-scoped output must contain only the current reviewer's values and status.
+3. `Evidence`: exact quote, PDF page and section/paragraph for the current reviewer. Leader-scoped
+   output may additionally identify R1/R2 evidence with the `Reviewer` column. Do not render
+   source asset ID, source revision, source hash, quote hash, exact start/end offsets, or
+   `pdfHighlightCoordinates`.
 
 The exact quote and source hash are canonical evidence. `pdfHighlightCoordinates` may be retained
 for UI compatibility but never replaces exact source evidence. A quote must be an exact bounded
@@ -500,8 +512,10 @@ Reviewer flow:
 
 1. Call `get_quality_context`, `list_quality_tasks`, `get_quality_strategy` and
    `get_quality_source`.
-2. Score every configured criterion using `0 = Yes`, `1 = No`, `2 = Unclear`; do not invent
-   criteria or weights. Save with `save_quality_assessment`.
+2. Score every configured criterion as `Yes`, `No`, or `Unclear`; do not invent criteria or
+   weights. The MCP payload uses the backend's numeric wire values internally, but all
+   user-facing tables must show the labels and never expose `0`, `1`, or `2` as answer codes.
+   Save with `save_quality_assessment`.
 3. Call `check_quality_assessment`. Any missing criterion, stale source, invalid quote, wrong
    offset, or missing source metadata is `BLOCK` and must be fixed.
 4. Show the complete tables and ask for explicit approval before `submit_quality_assessment`.

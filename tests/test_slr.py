@@ -397,6 +397,14 @@ class McpEndToEnd(unittest.TestCase):
             "idempotencyKey": "mcp-consensus-t-extract-" + "d" * 64,
         })
 
+    def test_quality_assessment_draft_save_url_encodes_paper_id(self):
+        """Regression: Phase 3 QA handlers must import urllib before quoting paper ids."""
+        self.configure()
+        draft = {"criteria": [{"id": "C1", "value": 1}], "evidence": []}
+        (saved,) = self.mcp(("save_quality_assessment", {"paper_id": "paper/1", "draft": draft}),)
+        self.assertFalse(saved["isError"])
+        self.assertEqual(saved["structuredContent"]["draft"], draft)
+
     def test_blocked_extraction_draft_never_challenges(self):
         self.configure()
         FakeApi.check_status = "BLOCK"
