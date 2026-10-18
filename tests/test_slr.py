@@ -224,6 +224,11 @@ class McpEndToEnd(unittest.TestCase):
                                  "check_extraction_draft", "submit_extraction_draft", "finalize_extraction_consensus",
                                  "analyze_extraction_consensus", "save_extraction_consensus_draft",
                                  "submit_extraction_consensus",
+                                 "get_quality_context", "list_quality_tasks", "get_quality_strategy",
+                                 "get_quality_source", "get_quality_assessment", "save_quality_assessment",
+                                 "check_quality_assessment", "submit_quality_assessment",
+                                 "analyze_quality_consensus", "save_quality_resolution_draft",
+                                 "submit_quality_resolution", "start_quality_phase", "complete_quality_phase",
                                  "save_draft", "list_drafts", "get_draft", "submit_drafts",
                                  "config_show", "config_set_url", "config_set_token", "config_use"})
         extraction = next(t for t in tools if t["name"] == "save_extraction_draft")
@@ -376,7 +381,7 @@ class McpEndToEnd(unittest.TestCase):
         self.assertEqual(submit_post[2], {
             "challengeId": "challenge-submit-challenge",
             "payloadDigest": "d" * 64,
-            "idempotencyKey": "mcp-extraction-t-extract-" + "d" * 64,
+            "idempotencyKey": "mcp-extraction-direct-v2-t-extract-" + "d" * 64,
         })
 
         proposal = {"expectedVersion": 0, "values": {"f1": {"stringValue": "Adults"}}, "findings": []}

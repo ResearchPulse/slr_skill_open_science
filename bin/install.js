@@ -23,7 +23,7 @@ const PKG_ROOT = path.resolve(__dirname, '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'));
 const SKILL_NAME = 'slr';
 const CONNECTOR_NAME = 'slr';
-const SKILL_ENTRIES = ['SKILL.md', 'scripts'];
+const SKILL_ENTRIES = ['SKILL.md', 'scripts', 'AI_AGENT_TASK_API_CONTRACT.md'];
 const STALE_ENTRIES = ['references']; // inlined into SKILL.md
 const HOME = os.homedir();
 const IS_WIN = process.platform === 'win32';

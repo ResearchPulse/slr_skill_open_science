@@ -56,6 +56,7 @@ SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 _OBJ = {"type": "object", "additionalProperties": False}
 _TASK_ID = {"task_id": {"type": "string", "description": "Task id from list_tasks"}}
+_PAPER_ID = {"paper_id": {"type": "string", "description": "Included QA paper id from list_quality_tasks"}}
 _PROFILE = {"profile": {"type": "string", "description": "Profile name; default = active profile"}}
 
 # Mirrors slr.validate_data; data.criteria feeds the web app's "Criteria assessment" panel.
@@ -188,6 +189,42 @@ CONSENSUS_DRAFT_SCHEMA = {
         "analysis": CONSENSUS_ANALYSIS_SCHEMA,
     },
     "required": ["expectedVersion", "values", "findings", "analysis"],
+}
+
+QUALITY_EVIDENCE_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "criterionId": {"type": "string"},
+        "quote": {"type": "string", "minLength": 1},
+        "sourceAssetId": {"type": "string"},
+        "sourceRevision": {"type": "string"},
+        "sourceHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "startOffset": {"type": "integer", "minimum": 0},
+        "endOffset": {"type": "integer", "minimum": 1},
+        "quoteHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "pdfPage": {"type": "integer", "minimum": 1},
+        "section": {"type": "string"},
+    },
+    "required": ["criterionId", "quote", "sourceAssetId", "sourceRevision", "sourceHash", "quoteHash"],
+}
+QUALITY_DECISION_ITEM_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "qualityCriterionId": {"type": "string"},
+        "value": {"type": "integer", "enum": [0, 1, 2], "description": "0 Yes, 1 No, 2 Unclear"},
+        "comment": {"type": ["string", "null"]},
+        "pdfHighlightCoordinates": {"type": ["string", "null"]},
+        "evidence": {"type": "array", "items": QUALITY_EVIDENCE_SCHEMA},
+    },
+    "required": ["qualityCriterionId", "value"],
+}
+QUALITY_ASSESSMENT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "notes": {"type": ["string", "null"]},
+        "decisionItems": {"type": "array", "items": QUALITY_DECISION_ITEM_SCHEMA, "minItems": 1},
+    },
+    "required": ["decisionItems"],
 }
 
 TOOLS = [
@@ -330,6 +367,75 @@ TOOLS = [
         "inputSchema": {**_OBJ, "properties": {**_TASK_ID, "proposal": {"type": "object"}},
                          "required": ["task_id", "proposal"]},
         "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "name": "get_quality_context", "title": "Get QA context",
+        "description": "Read the role-scoped Quality Assessment process, strategy, capabilities and assignments.",
+        "inputSchema": {**_OBJ, "properties": {}}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "list_quality_tasks", "title": "List QA tasks",
+        "description": "List reviewer-assigned or leader-visible included papers with reviewer completion status. Reviewer tokens never receive peer values.",
+        "inputSchema": {**_OBJ, "properties": {}}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_quality_strategy", "title": "Get QA strategy",
+        "description": "Return the canonical QA checklists, criteria, questions and weights.",
+        "inputSchema": {**_OBJ, "properties": {}}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_quality_source", "title": "Get QA source text",
+        "description": "Read the immutable Cloudinary-backed full-text Markdown and source hash used for exact QA evidence.",
+        "inputSchema": {**_OBJ, "properties": _PAPER_ID, "required": ["paper_id"]}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_quality_assessment", "title": "Get QA assessment",
+        "description": "Reviewer: own assessment and draft only. Leader: both submitted reviewer assessments for one paper.",
+        "inputSchema": {**_OBJ, "properties": _PAPER_ID, "required": ["paper_id"]}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "save_quality_assessment", "title": "Save QA assessment draft",
+        "description": "Reviewer-only. Save or replace your own criterion answers and source-bound evidence without changing the canonical submission.",
+        "inputSchema": {**_OBJ, "properties": {**_PAPER_ID, "draft": QUALITY_ASSESSMENT_SCHEMA}, "required": ["paper_id", "draft"]},
+        "annotations": {"idempotentHint": True},
+    },
+    {
+        "name": "check_quality_assessment", "title": "Check QA assessment",
+        "description": "Reviewer-only. Validate all criteria, exact quote/source hash evidence and source offsets before submission.",
+        "inputSchema": {**_OBJ, "properties": _PAPER_ID, "required": ["paper_id"]}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "submit_quality_assessment", "title": "Submit QA assessment",
+        "description": "Reviewer-only and irreversible for the current draft version. Requires explicit user approval; returns backend-confirmed SUBMITTED status.",
+        "inputSchema": {**_OBJ, "properties": _PAPER_ID, "required": ["paper_id"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "name": "analyze_quality_consensus", "title": "Analyze QA consensus",
+        "description": "Leader-only. Compare every configured criterion, both reviewer answers, comments, exact evidence, source checks and conflict reasons. Never writes.",
+        "inputSchema": {**_OBJ, "properties": _PAPER_ID, "required": ["paper_id"]}, "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "save_quality_resolution_draft", "title": "Save QA resolution draft",
+        "description": "Leader-only. Store a recommendation/analysis draft; it is not the official project resolution.",
+        "inputSchema": {**_OBJ, "properties": {**_PAPER_ID, "draft": {"type": "object"}}, "required": ["paper_id", "draft"]},
+        "annotations": {"idempotentHint": True},
+    },
+    {
+        "name": "submit_quality_resolution", "title": "Submit official QA resolution",
+        "description": "Leader-only. Submit the explicit final High/Low decision after reviewing the full comparison. The backend recomputes the score and records audit metadata.",
+        "inputSchema": {**_OBJ, "properties": {**_PAPER_ID, "finalDecision": {"type": "integer", "enum": [0, 1]}, "resolutionNotes": {"type": ["string", "null"]}}, "required": ["paper_id", "finalDecision"]},
+        "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "name": "start_quality_phase", "title": "Start QA phase",
+        "description": "Leader-only. Start Quality Assessment when canonical Study Selection prerequisites and criteria are ready.",
+        "inputSchema": {**_OBJ, "properties": {}}, "annotations": {"destructiveHint": True, "idempotentHint": True},
+    },
+    {
+        "name": "complete_quality_phase", "title": "Complete QA phase",
+        "description": "Leader-only. Complete QA only after every included paper has two complete reviewer assessments and an official resolution.",
+        "inputSchema": {**_OBJ, "properties": {}}, "annotations": {"destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     },
     {
         "name": "save_draft",
@@ -585,8 +691,105 @@ def _consensus_markdown(payload):
     return "\n\n".join(parts) or _markdown_content(payload)
 
 
+def _is_quality_payload(payload):
+    if not isinstance(payload, dict):
+        return False
+    analysis = payload.get("analysis")
+    return (payload.get("profileScope") in {"REVIEWER", "LEADER"}
+            or payload.get("role") in {"REVIEWER", "LEADER"}
+            or isinstance(payload.get("reviewerStatuses"), list)
+            or isinstance(payload.get("decisionItems"), list)
+            or isinstance(analysis, dict) and analysis.get("schemaVersion") == "quality-consensus-v1")
+
+
+def _quality_markdown(payload):
+    parts = []
+    summary = []
+    for key in ("taskId", "projectId", "paperId", "paperTitle", "role", "status", "profileScope", "message"):
+        if key in payload:
+            summary.append({"Field": key, "Value": payload.get(key)})
+    if isinstance(payload.get("project"), dict):
+        summary.append({"Field": "Project", "Value": payload["project"].get("name") or payload["project"].get("id")})
+    if summary:
+        parts.append("## QA overview\n\n" + _markdown_table(summary))
+
+    for key, title in (("reviewerStatuses", "Reviewer submission status"), ("items", "QA tasks"), ("strategies", "QA strategy")):
+        value = payload.get(key)
+        if isinstance(value, list):
+            rows = []
+            for item in value:
+                if isinstance(item, dict):
+                    rows.append(item)
+            if rows:
+                parts.append(f"## {title}\n\n" + _markdown_table(rows))
+        elif isinstance(value, dict):
+            parts.append(f"## {title}\n\n" + _markdown_table([{"Section": key, "Value": value}]))
+
+    analysis = payload.get("analysis")
+    if isinstance(analysis, dict):
+        fields = analysis.get("fields") or []
+        rows, evidence_rows = [], []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            r1 = field.get("reviewer1Evidence") or []
+            r2 = field.get("reviewer2Evidence") or []
+            rows.append({
+                "Field": field.get("fieldName") or field.get("fieldId"),
+                "Field ID": field.get("fieldId"),
+                "Section": field.get("sectionName"),
+                "Weight": field.get("weight"),
+                "Status": field.get("status"),
+                "R1 answer/score": f"{field.get('reviewer1Value')} / {field.get('reviewer1Score')}",
+                "R2 answer/score": f"{field.get('reviewer2Value')} / {field.get('reviewer2Score')}",
+                "R1 evidence": len(r1), "R2 evidence": len(r2),
+                "Checks": field.get("checks") or [], "Reason": field.get("reason"),
+            })
+            for reviewer, evidence in (("R1", r1), ("R2", r2)):
+                for item in evidence:
+                    if isinstance(item, dict):
+                        evidence_rows.append({
+                            "Field": field.get("fieldName") or field.get("fieldId"),
+                            "Reviewer": reviewer, "Exact quote": item.get("quote"),
+                            "Source asset": item.get("sourceAssetId"), "Source revision": item.get("sourceRevision"),
+                            "Source hash": item.get("sourceHash"), "Offsets": f"{item.get('startOffset')}–{item.get('endOffset')}",
+                            "Quote hash": item.get("quoteHash"), "PDF page": item.get("pdfPage"),
+                        })
+        parts.append("## Criterion-by-criterion comparison\n\n" + _markdown_table(rows or [{"Field": "—", "Status": analysis.get("status")}]))
+        parts.append("## Evidence\n\n" + _markdown_table(evidence_rows or [{"Field": "—", "Reviewer": "—", "Evidence": "Missing"}]))
+        parts.append("## Analysis result\n\n" + _markdown_table([
+            {"Field": "Status", "Value": analysis.get("status")},
+            {"Field": "Summary", "Value": analysis.get("summary")},
+            {"Field": "Generated at", "Value": analysis.get("generatedAt")},
+        ]))
+
+    assessments = payload.get("assessments")
+    if isinstance(assessments, list):
+        rows, evidence_rows = [], []
+        for assessment in assessments:
+            if not isinstance(assessment, dict):
+                continue
+            rows.append({"Reviewer": assessment.get("reviewerId"), "Name": assessment.get("reviewerName"), "Score": assessment.get("score"), "Notes": assessment.get("notes")})
+            for item in assessment.get("decisionItems") or []:
+                if not isinstance(item, dict):
+                    continue
+                rows.append({"Reviewer": assessment.get("reviewerId"), "Criterion": item.get("qualityCriterionId"), "Question": item.get("criterionQuestion"), "Answer": item.get("value"), "Comment": item.get("comment"), "Evidence count": len(item.get("evidence") or [])})
+                for evidence in item.get("evidence") or []:
+                    if isinstance(evidence, dict):
+                        evidence_rows.append({"Reviewer": assessment.get("reviewerId"), "Criterion": item.get("qualityCriterionId"), "Exact quote": evidence.get("quote"), "Source hash": evidence.get("sourceHash"), "Quote hash": evidence.get("quoteHash"), "Offsets": f"{evidence.get('startOffset')}–{evidence.get('endOffset')}"})
+        parts.append("## Assessment values\n\n" + _markdown_table(rows or [{"Assessment": "None"}]))
+        parts.append("## Assessment evidence\n\n" + _markdown_table(evidence_rows or [{"Evidence": "None"}]))
+
+    if isinstance(payload.get("draft"), dict):
+        draft = payload["draft"]
+        parts.append("## Draft status\n\n" + _markdown_table([{"Version": draft.get("version"), "Status": draft.get("status"), "Updated": draft.get("updatedAt"), "Evidence source": draft.get("source")}]))
+    return "\n\n".join(parts) or _markdown_content(payload)
+
+
 def tool_result(payload, is_error=False):
-    content = _consensus_markdown(payload) if _consensus_root(payload) else _markdown_content(payload)
+    content = (_quality_markdown(payload) if _is_quality_payload(payload)
+               else _consensus_markdown(payload) if _consensus_root(payload)
+               else _markdown_content(payload))
     return {"content": [{"type": "text", "text": content}],
             "structuredContent": payload, "isError": is_error}
 
@@ -686,6 +889,40 @@ def call_tool(name, args):
                                                           proposal=args["proposal"])
             return tool_result({"taskId": str(args["task_id"]), "status": "CONSENSUS_PROPOSAL",
                                 "proposal": result})
+        if name == "get_quality_context":
+            return tool_result(Client().quality_request("GET", "/context"))
+        if name == "list_quality_tasks":
+            return tool_result(Client().quality_request("GET", "/tasks"))
+        if name == "get_quality_strategy":
+            return tool_result(Client().quality_request("GET", "/strategy"))
+        if name == "get_quality_source":
+            source = Client().get_quality_source(str(args["paper_id"]))
+            # Keep the normalized Markdown as plain text so the model can copy
+            # an exact quote and compute offsets against the returned source.
+            return {"content": [{"type": "text", "text": source.get("markdown", "")}], "structuredContent": source}
+        if name == "get_quality_assessment":
+            paper_id = urllib.parse.quote(str(args["paper_id"]))
+            return tool_result(Client().quality_request("GET", f"/papers/{paper_id}/assessment"))
+        if name == "save_quality_assessment":
+            paper_id = urllib.parse.quote(str(args["paper_id"]))
+            return tool_result(Client().quality_request("PUT", f"/papers/{paper_id}/assessment/draft", args["draft"]))
+        if name == "check_quality_assessment":
+            paper_id = urllib.parse.quote(str(args["paper_id"]))
+            return tool_result(Client().quality_request("POST", f"/papers/{paper_id}/assessment/check", {}))
+        if name == "submit_quality_assessment":
+            return tool_result(Client().submit_quality_assessment(str(args["paper_id"])))
+        if name == "analyze_quality_consensus":
+            paper_id = urllib.parse.quote(str(args["paper_id"]))
+            return tool_result(Client().quality_request("GET", f"/papers/{paper_id}/consensus"))
+        if name == "save_quality_resolution_draft":
+            paper_id = urllib.parse.quote(str(args["paper_id"]))
+            return tool_result(Client().quality_request("PUT", f"/papers/{paper_id}/resolution-draft", args["draft"]))
+        if name == "submit_quality_resolution":
+            return tool_result(Client().submit_quality_resolution(str(args["paper_id"]), args["finalDecision"], args.get("resolutionNotes")))
+        if name == "start_quality_phase":
+            return tool_result(Client().quality_request("POST", "/start", {}))
+        if name == "complete_quality_phase":
+            return tool_result(Client().quality_request("POST", "/complete", {"confirmation": True}))
         if name == "get_markdown":
             tid = str(args["task_id"])
             try:
@@ -754,7 +991,7 @@ def handle(msg):
             "protocolVersion": ver,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
-            "instructions": ("Connector for /slr screening and extraction. Screening results are "
+            "instructions": ("Connector for /slr screening, extraction and quality assessment. Screening results are "
                              "advisory recommendations and never human votes. Always render "
                              "complete inline Markdown tables for review results: task metadata, "
                              "every custom extraction field, every evidence item, and every "
@@ -768,7 +1005,12 @@ def handle(msg):
                              "both reviewer submissions, and compare every custom field plus every "
                              "evidence item. Missing reviewers and CONFLICT stop the official submit; "
                              "only a conflict-free draft may finalize canonical project consensus. "
-                             "submit_drafts / submit_result and all extraction writes require explicit "
+                             "Quality Assessment commands always render complete criterion-level tables "
+                             "with reviewer values, scores, comments, evidence quotes, source hashes, "
+                             "offsets, checks and conflict reasons. Reviewer tokens never receive peer "
+                             "content. Leader QA comparisons cover every criterion and official "
+                             "resolution requires explicit confirmation after both reviewer assessments "
+                             "are complete. submit_drafts / submit_result and all extraction/QA writes require explicit "
                              "user approval. Never repeat the agent token."),
         }}
     if method == "ping":
