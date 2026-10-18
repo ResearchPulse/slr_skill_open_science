@@ -506,7 +506,9 @@ behavior:
 2. `/slr qa review` and `/slr qa consensus` render their actual criterion-level details. The
    consensus table must contain `Question`, `R1 answer`, `R2 answer`, `Status`, `Recommendation`,
    and `Reason/checks`; its evidence table must contain `Evidence quote`, `PDF page`, and
-   `Section/paragraph`, with `Reviewer` only in leader-scoped comparison output.
+   `Section/paragraph`, with `Reviewer` only in leader-scoped comparison output. `R1 answer` and
+   `R2 answer` must be labels only (`Yes/No/Unclear` or the localized equivalents); never append
+   numeric wire values, point scores, or forms such as `Có (1,0)`.
 3. Reviewer-scoped output must contain only the current reviewer's values and status. Do not render
    source asset ID, source revision, source hash, quote hash, exact start/end offsets, or
    `pdfHighlightCoordinates` in any user-facing table.
@@ -568,7 +570,13 @@ Reviewer flow:
 3. Call `check_quality_assessment`. Any missing criterion, stale source, invalid quote, wrong
    offset, or missing source metadata is `BLOCK` and must be fixed.
 4. Show the complete tables and ask for explicit approval before `submit_quality_assessment`.
-   Report only the backend-confirmed `SUBMITTED` result.
+   Report only the backend-confirmed `SUBMITTED` result. A previously submitted reviewer
+   assessment is still editable by its owner: `qa review` creates/replaces a new draft and
+   `qa submit` updates that reviewer's canonical assessment after the draft passes checks.
+   Always state both `Draft status` and `Canonical assessment status` in the table. If the
+   paper is already officially resolved, the backend returns `QA_PAPER_RESOLVED`; explain that
+   the review cannot be updated until the Leader reopens the paper, and do not claim that the
+   evidence was persisted merely because the draft/check passed.
 
 Leader flow:
 
